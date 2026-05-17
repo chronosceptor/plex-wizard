@@ -1,0 +1,65 @@
+import os
+import re
+import requests
+
+LASTFM_API = "https://ws.audioscrobbler.com/2.0/"
+
+
+def _key() -> str:
+    k = os.environ.get("LASTFM_API_KEY", "")
+    if not k:
+        raise ValueError("LASTFM_API_KEY no configurado en .env")
+    return k
+
+
+def _get(params: dict) -> dict:
+    params = {**params, "api_key": _key(), "format": "json"}
+    resp = requests.get(LASTFM_API, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data:
+        raise ValueError(f"Last.fm error {data['error']}: {data.get('message', '')}")
+    return data
+
+
+def _clean_bio(raw: str) -> str:
+    """Strip HTML tags and the 'Read more on Last.fm' trailer."""
+    text = re.sub(r'<a\s[^>]*>.*?</a>', '', raw, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
+def get_artist(name: str, mbid: str | None = None) -> dict:
+    params: dict = {"method": "artist.getInfo"}
+    if mbid:
+        params["mbid"] = mbid
+    else:
+        params["artist"] = name
+
+    data = _get(params).get("artist", {})
+
+    # Tags — can come as list or single dict
+    tags_raw = data.get("tags", {}).get("tag", [])
+    if isinstance(tags_raw, dict):
+        tags_raw = [tags_raw]
+    tags = [t["name"] for t in tags_raw if isinstance(t, dict) and t.get("name")]
+
+    # Similar artists
+    similar_raw = data.get("similar", {}).get("artist", [])
+    similar = [s["name"] for s in similar_raw if isinstance(s, dict) and s.get("name")]
+
+    bio_raw = data.get("bio", {}).get("summary", "") or ""
+    bio = _clean_bio(bio_raw)
+
+    stats = data.get("stats", {}) or {}
+    return {
+        "name":      data.get("name"),
+        "mbid":      data.get("mbid") or None,
+        "url":       data.get("url"),
+        "tags":      tags,
+        "similar":   similar[:10],
+        "bio":       bio or None,
+        "listeners": int(stats.get("listeners") or 0),
+        "playcount": int(stats.get("playcount") or 0),
+    }
