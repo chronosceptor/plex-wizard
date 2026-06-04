@@ -5,6 +5,21 @@ Todos los cambios notables de este proyecto se documentan aquí.
 ## [Unreleased]
 
 ### Added
+- **SQLite persistence layer** (`backend/db.py`): stores per-artist service links — `discogs_id` (int) and `lastfm_name` (text) keyed by Plex `ratingKey`. File `artist_links.db` is gitignored. `db.init_db()` called at FastAPI startup.
+- **DiscogsLinkModal**: new component that auto-searches Discogs when opened, shows candidates with thumbnail, and saves the selected `discogs_id` to SQLite. Includes "Remove" option for already-linked artists.
+- **LastFMLinkModal**: new component with pre-filled search input (Plex artist name), searches Last.fm `artist.search` API, shows candidates with listener counts, and saves the canonical `lastfm_name` to SQLite.
+- **`lastfm_client.search_artists()`**: new function using Last.fm `artist.search`, returns name/mbid/url/listeners.
+- **`PUT /api/artist/{rk}/links/discogs`** and **`PUT /api/artist/{rk}/links/lastfm`**: save/clear service links independently in SQLite.
+- **`GET /api/lastfm/search?q=X`**: search Last.fm artists by name.
+
+### Changed
+- **Artists page rewritten**: columns Artist | MusicBrainz | Discogs | Last.fm | Plex. Filters: All / No Match / No MusicBrainz / No Discogs / No Last.fm.
+- **`GET /api/artists`**: now merges fresh SQLite links on every request on top of the Plex scan cache.
+- **`GET /api/artist/{rk}/status`**: now returns `discogs_id` and `lastfm_name` from SQLite for the override-refresh pattern.
+- **UI language**: all frontend text is now in English (labels, filters, buttons, navigation sidebar).
+- **`.gitignore`**: added `*.db`.
+
+### Added
 - **Genre Manager** (`/genres`): nueva página para consolidar géneros de la librería. Panel izquierdo lista todos los géneros con conteo de artistas (géneros con ≤ 3 artistas se marcan en ámbar como candidatos a fusionar). Panel derecho muestra artistas del género seleccionado con checkboxes. Barra de reasignación con autocompletado de géneros existentes o escritura libre para crear uno nuevo. Permite mover artistas entre géneros o fusionar géneros pequeños en uno mayor.
 - **Backend `GET /api/genres`**: endpoint que lee artistas de Plex, agrupa por género primario y devuelve lista ordenada por conteo con artistas incluidos.
 - **Backend `POST /api/genres/reassign`**: endpoint para reasignar el género primario de una lista de artistas en Plex.

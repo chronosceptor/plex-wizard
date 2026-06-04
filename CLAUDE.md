@@ -3,6 +3,10 @@
 ## Proyecto
 Webapp para auditar y enriquecer metadata de música en Plex. Backend FastAPI (Python 3.11+) + Frontend React 18/Vite/TailwindCSS/TanStack Query.
 
+## UI Language
+
+All UI text is in English. Frontend labels, button text, filter names, error messages — English only.
+
 ## Dev
 
 ```bash
@@ -21,6 +25,7 @@ Variables de entorno en `.env` en la raíz: `PLEX_URL`, `PLEX_TOKEN`, `LASTFM_AP
 ```
 backend/
   main.py              # FastAPI — todos los endpoints
+  db.py                # SQLite persistence — artist_links (discogs_id, lastfm_name)
   plex_client.py       # Conexión PlexServer
   scan_manager.py      # Scan en background con caché por paso
   mb_client.py         # MusicBrainz API
@@ -34,6 +39,8 @@ frontend/src/
   hooks/useAuditData.js     # Lee resultados del contexto
   components/
     Layout.jsx              # Sidebar + progreso del scan
+    DiscogsLinkModal.jsx    # Search Discogs candidates → save artist's discogs_id to SQLite
+    LastFMLinkModal.jsx     # Search Last.fm artists → save artist's lastfm_name to SQLite
     EnrichModal.jsx         # 4 tabs: MusicBrainz · Last.fm · Discogs · Wikidata
     AlbumDiscogsModal.jsx   # Enrich album desde Discogs (géneros/styles/labels/bio)
     AutoMatchModal.jsx      # Auto-match artista con MB (compara discografías)
@@ -44,6 +51,21 @@ frontend/src/
     ArtistDetail.jsx        # Detalle artista + tabla de albums con status dots
     GenreManager.jsx        # Gestión de géneros: ver/reasignar artistas entre géneros
 ```
+
+## Service Links (SQLite)
+
+- `artist_links.db` stores `discogs_id` (int) and `lastfm_name` (text) per `ratingKey` — file is gitignored.
+- MusicBrainz → stored in Plex guids (`mbid://uuid`). Discogs/Last.fm → stored in SQLite only.
+- `set_discogs()` and `set_lastfm()` are independent — updating one never overwrites the other field.
+- `/api/artists` always merges fresh SQLite links on top of Plex scan cache. Don't cache the merged result.
+- `/api/artist/{rk}/status` returns `discogs_id` + `lastfm_name` so the `refreshArtist` override pattern picks them up immediately after modal close.
+- `db.init_db()` called at FastAPI startup — creates table if not exists, safe to call every time.
+
+## Artists page (current)
+
+Filters: All / No Match / No MusicBrainz / No Discogs / No Last.fm
+Columns: Artist | MusicBrainz | Discogs | Last.fm | Plex
+"No Match" = none of the three services linked (`isMatched=false` AND no `discogs_id` AND no `lastfm_name`).
 
 ## Arquitectura de modales
 

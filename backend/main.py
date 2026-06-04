@@ -10,7 +10,8 @@ from requests.exceptions import RequestException, Timeout as RequestTimeout
 from plex_client import get_plex
 from scan_manager import start_scan, get_status, get_results, get_step_result
 from mb_client import get_artist as mb_get_artist, search_artists as mb_search_artists, get_artist_releases as mb_get_releases
-from lastfm_client import get_artist as lfm_get_artist
+from lastfm_client import get_artist as lfm_get_artist, search_artists as lfm_search_artists
+import db as db
 from discogs_client import (
     search_artists as dg_search_artists,
     get_artist as dg_get_artist,
@@ -53,6 +54,8 @@ def _safe_mbid(raw: str) -> str:
         raise HTTPException(status_code=400, detail="MBID inválido")
     return mbid
 
+db.init_db()
+
 app = FastAPI(title="Plex Wizard")
 
 app.add_middleware(
@@ -69,53 +72,60 @@ app.add_middleware(
 
 @app.get("/api/artists")
 def list_all_artists(library: str = Query(...)):
-    """Return all artists with their metadata status for the unified artist view.
-    Uses the scan cache when available (populated during the all_artists scan step)
-    so the page loads instantly after a scan instead of re-fetching from Plex.
+    """Return all artists merged with SQLite service links.
+    Uses the scan cache for Plex data when available; SQLite links are always fresh.
     """
     cached = get_step_result(library, "all_artists")
     if cached is not None:
-        return cached
+        plex_artists = cached
+    else:
+        plex = get_plex()
+        try:
+            section = plex.library.section(library)
+            plex_artists = []
+            for a in section.all():
+                guid = getattr(a, "guid", "") or ""
+                secondary = [g.id for g in getattr(a, "guids", [])]
+                mbid = None
+                if guid.startswith("mbid://"):
+                    mbid = guid.replace("mbid://", "")
+                else:
+                    for g in secondary:
+                        if g.startswith("mbid://"):
+                            mbid = g.replace("mbid://", "")
+                            break
+                genres    = [g.tag for g in (a.genres  or [])]
+                styles    = [s.tag for s in (getattr(a, "styles", None) or [])]
+                moods     = [m.tag for m in (a.moods   or [])]
+                countries = [c.tag for c in (a.countries or [])]
+                plex_artists.append({
+                    "ratingKey":  a.ratingKey,
+                    "title":      a.title,
+                    "thumb":      bool(a.thumb),
+                    "guid":       guid,
+                    "mbid":       mbid,
+                    "isMatched":  mbid is not None,
+                    "genres":     genres,
+                    "styles":     styles,
+                    "moods":      moods,
+                    "country":    countries[0] if countries else None,
+                    "hasBio":     bool((a.summary or "").strip()),
+                    "albumCount": getattr(a, "childCount", None) or getattr(a, "albumCount", 0) or 0,
+                    "viewCount":  getattr(a, "viewCount", 0) or 0,
+                })
+            plex_artists.sort(key=lambda x: x["title"].lower())
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
-    plex = get_plex()
-    try:
-        section = plex.library.section(library)
-        artists = []
-        for a in section.all():
-            guid = getattr(a, "guid", "") or ""
-            secondary = [g.id for g in getattr(a, "guids", [])]
-            # Extract the raw UUID from whichever GUID carries the mbid:// prefix
-            mbid = None
-            if guid.startswith("mbid://"):
-                mbid = guid.replace("mbid://", "")
-            else:
-                for g in secondary:
-                    if g.startswith("mbid://"):
-                        mbid = g.replace("mbid://", "")
-                        break
-            genres    = [g.tag for g in (a.genres  or [])]
-            styles    = [s.tag for s in (getattr(a, "styles", None) or [])]
-            moods     = [m.tag for m in (a.moods   or [])]
-            countries = [c.tag for c in (a.countries or [])]
-            artists.append({
-                "ratingKey":  a.ratingKey,
-                "title":      a.title,
-                "thumb":      bool(a.thumb),
-                "guid":       guid,
-                "mbid":       mbid,
-                "isMatched":  mbid is not None,
-                "genres":     genres,
-                "styles":     styles,
-                "moods":      moods,
-                "country":    countries[0] if countries else None,
-                "hasBio":     bool((a.summary or "").strip()),
-                "albumCount": getattr(a, "childCount", None) or getattr(a, "albumCount", 0) or 0,
-                "viewCount":  getattr(a, "viewCount", 0) or 0,
-            })
-        artists.sort(key=lambda x: x["title"].lower())
-        return artists
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    all_links = db.get_all_links()
+    return [
+        {
+            **a,
+            "discogs_id":  all_links.get(a["ratingKey"], {}).get("discogs_id"),
+            "lastfm_name": all_links.get(a["ratingKey"], {}).get("lastfm_name"),
+        }
+        for a in plex_artists
+    ]
 
 
 @app.get("/api/plex-info")
@@ -144,17 +154,20 @@ def artist_status(rating_key: int):
                 if g.startswith("mbid://"):
                     mbid = g.replace("mbid://", "")
                     break
+        links = db.get_links(rating_key)
         return {
-            "ratingKey": a.ratingKey,
-            "thumb":     bool(a.thumb),
-            "guid":      guid,
-            "mbid":      mbid,
-            "isMatched": mbid is not None,
-            "genres":    [g.tag for g in (a.genres or [])],
-            "styles":    [s.tag for s in (getattr(a, "styles", None) or [])],
-            "moods":     [m.tag for m in (a.moods or [])],
-            "country":   ([c.tag for c in (a.countries or [])] + [None])[0],
-            "hasBio":    bool((a.summary or "").strip()),
+            "ratingKey":   a.ratingKey,
+            "thumb":       bool(a.thumb),
+            "guid":        guid,
+            "mbid":        mbid,
+            "isMatched":   mbid is not None,
+            "genres":      [g.tag for g in (a.genres or [])],
+            "styles":      [s.tag for s in (getattr(a, "styles", None) or [])],
+            "moods":       [m.tag for m in (a.moods or [])],
+            "country":     ([c.tag for c in (a.countries or [])] + [None])[0],
+            "hasBio":      bool((a.summary or "").strip()),
+            "discogs_id":  links["discogs_id"],
+            "lastfm_name": links["lastfm_name"],
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -226,6 +239,40 @@ def list_libraries():
         for s in plex.library.sections()
         if s.type == "artist"
     ]
+
+
+# ---------------------------------------------------------------------------
+# Service link endpoints (SQLite)
+# ---------------------------------------------------------------------------
+
+class DiscogsLinkPayload(BaseModel):
+    discogs_id: int | None
+
+
+class LastFMLinkPayload(BaseModel):
+    lastfm_name: str | None
+
+
+@app.put("/api/artist/{rating_key}/links/discogs")
+def set_discogs_link(rating_key: int, payload: DiscogsLinkPayload):
+    db.set_discogs(rating_key, payload.discogs_id)
+    return {"success": True, "discogs_id": payload.discogs_id}
+
+
+@app.put("/api/artist/{rating_key}/links/lastfm")
+def set_lastfm_link(rating_key: int, payload: LastFMLinkPayload):
+    name = payload.lastfm_name.strip() if payload.lastfm_name else None
+    db.set_lastfm(rating_key, name)
+    return {"success": True, "lastfm_name": name}
+
+
+@app.get("/api/lastfm/search")
+def lastfm_search(q: str = Query(...)):
+    try:
+        results = lfm_search_artists(q)
+        return {"results": results}
+    except Exception as e:
+        _raise_for_external(e)
 
 
 # ---------------------------------------------------------------------------

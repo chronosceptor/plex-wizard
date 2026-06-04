@@ -30,6 +30,23 @@ def _clean_bio(raw: str) -> str:
     return text
 
 
+def search_artists(name: str, limit: int = 8) -> list[dict]:
+    data = _get({"method": "artist.search", "artist": name, "limit": limit})
+    matches = data.get("results", {}).get("artistmatches", {}).get("artist", [])
+    if isinstance(matches, dict):
+        matches = [matches]
+    return [
+        {
+            "name":      m.get("name"),
+            "mbid":      m.get("mbid") or None,
+            "url":       m.get("url"),
+            "listeners": int(m.get("listeners") or 0),
+        }
+        for m in matches
+        if m.get("name")
+    ]
+
+
 def get_artist(name: str, mbid: str | None = None) -> dict:
     params: dict = {"method": "artist.getInfo"}
     if mbid:

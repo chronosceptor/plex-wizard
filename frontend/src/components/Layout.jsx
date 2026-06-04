@@ -6,14 +6,14 @@ import { useScan } from '../context/ScanContext'
 const navItems = [
   { to: '/', label: 'Dashboard' },
   { divider: true },
-  { to: '/artists', label: 'Artistas' },
-  { to: '/genres', label: 'Géneros' },
-  { to: '/albums-no-match', label: 'Albums sin match' },
-  { to: '/albums', label: 'Albums sin portada' },
-  { to: '/tracks', label: 'Tracks incompletos' },
-  { to: '/listening', label: 'Stats de escucha' },
+  { to: '/artists', label: 'Artists' },
+  { to: '/genres', label: 'Genres' },
+  { to: '/albums-no-match', label: 'Albums without match' },
+  { to: '/albums', label: 'Albums without artwork' },
+  { to: '/tracks', label: 'Incomplete tracks' },
+  { to: '/listening', label: 'Listening stats' },
   { divider: true },
-  { to: '/playlists', label: 'Generar playlist' },
+  { to: '/playlists', label: 'Generate playlist' },
 ]
 
 function ScanProgress({ steps = [] }) {
