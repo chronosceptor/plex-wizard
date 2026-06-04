@@ -59,6 +59,7 @@ function Section({ title, children }) {
 
 export default function AlbumDiscogsModal({ album, onClose, onApplied }) {
   const [selectedId, setSelectedId] = useState(null)
+  const [selectedGenre, setSelectedGenre] = useState(null)
   const [applied, setApplied] = useState({ genres: false, styles: false, labels: false, bio: false })
 
   const searchQ = useQuery({
@@ -122,7 +123,7 @@ export default function AlbumDiscogsModal({ album, onClose, onApplied }) {
             {results.map(r => (
               <div
                 key={r.id}
-                onClick={() => setSelectedId(r.id === selectedId ? null : r.id)}
+                onClick={() => { setSelectedId(r.id === selectedId ? null : r.id); setSelectedGenre(null) }}
                 className={`flex items-center gap-3 p-3 rounded border cursor-pointer transition-colors ${
                   selectedId === r.id
                     ? 'border-plex-orange bg-plex-orange/10'
@@ -157,13 +158,33 @@ export default function AlbumDiscogsModal({ album, onClose, onApplied }) {
               {detail && (
                 <>
                   {detail.genres?.length > 0 && (
-                    <Section title="Géneros">
+                    <Section title="Género (1 solo)">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex flex-wrap gap-1.5 flex-1">
-                          {detail.genres.map(g => <TagChip key={g}>{g}</TagChip>)}
+                          {detail.genres.length === 1
+                            ? <TagChip>{detail.genres[0]}</TagChip>
+                            : detail.genres.map(g => (
+                                <button
+                                  key={g}
+                                  onClick={() => setSelectedGenre(g === selectedGenre ? null : g)}
+                                  className={`inline-block rounded px-2 py-0.5 text-xs transition-colors ${
+                                    (selectedGenre === g) || (!selectedGenre && g === detail.genres[0])
+                                      ? 'bg-plex-orange/20 text-plex-orange border border-plex-orange/40'
+                                      : 'bg-plex-border text-gray-300 hover:border-plex-orange/30 border border-transparent'
+                                  }`}
+                                >
+                                  {g}
+                                </button>
+                              ))
+                          }
+                          {detail.genres.length > 1 && (
+                            <span className="text-xs text-plex-muted/60 w-full mt-0.5">
+                              {selectedGenre ? `Seleccionado: ${selectedGenre}` : `Se aplicará el primero`}
+                            </span>
+                          )}
                         </div>
                         <ApplyBtn label="Aplicar" applied={applied.genres} disabled={mutation.isPending}
-                          onClick={() => mutation.mutate({ genres: detail.genres })} />
+                          onClick={() => mutation.mutate({ genres: [selectedGenre || detail.genres[0]] })} />
                       </div>
                     </Section>
                   )}
@@ -205,7 +226,7 @@ export default function AlbumDiscogsModal({ album, onClose, onApplied }) {
                   {canApplyAll && (
                     <button
                       onClick={() => mutation.mutate({
-                        genres: detail.genres?.length ? detail.genres : null,
+                        genres: detail.genres?.length ? [selectedGenre || detail.genres[0]] : null,
                         styles: detail.styles?.length ? detail.styles : null,
                         labels: detail.labels?.length ? detail.labels : null,
                         bio:    detail.notes || null,

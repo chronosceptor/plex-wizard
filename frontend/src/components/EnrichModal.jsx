@@ -13,7 +13,6 @@ async function applyLastFM(ratingKey, payload) {
   const res = await fetch(`/api/artist/${ratingKey}/apply-lastfm`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      tags:    payload.tags    ?? null,
       styles:  payload.styles  ?? null,
       moods:   payload.moods   ?? null,
       similar: payload.similar ?? null,
@@ -72,7 +71,7 @@ function ApplyBtn({ onClick, disabled, applied, label = 'Aplicar' }) {
 // ── Last.fm tab ─────────────────────────────────────────────────────────────
 
 function LastFMTab({ artist }) {
-  const [applied, setApplied] = useState({ tags: false, styles: false, moods: false, bio: false, similar: false })
+  const [applied, setApplied] = useState({ styles: false, moods: false, bio: false, similar: false })
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['lastfm', artist.ratingKey],
@@ -83,7 +82,6 @@ function LastFMTab({ artist }) {
   const mutation = useMutation({
     mutationFn: (payload) => applyLastFM(artist.ratingKey, payload),
     onSuccess: (_, vars) => setApplied(prev => ({
-      tags:    prev.tags    || !!vars.tags,
       styles:  prev.styles  || !!vars.styles,
       moods:   prev.moods   || !!vars.moods,
       bio:     prev.bio     || !!vars.bio,
@@ -104,7 +102,7 @@ function LastFMTab({ artist }) {
         {data.url && <a href={data.url} target="_blank" rel="noopener noreferrer" className="text-plex-orange hover:underline">Ver en Last.fm ↗</a>}
       </div>
 
-      {/* Tags — can apply as genres OR moods */}
+      {/* Tags — apply as styles or moods */}
       {data.tags.length > 0 && (
         <div className="rounded-lg border border-plex-border p-4 space-y-3">
           <div>
@@ -114,8 +112,6 @@ function LastFMTab({ artist }) {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <ApplyBtn applied={applied.tags} disabled={mutation.isPending}
-              label="→ Géneros" onClick={() => mutation.mutate({ tags: data.tags })} />
             <ApplyBtn applied={applied.styles} disabled={mutation.isPending}
               label="→ Styles" onClick={() => mutation.mutate({ styles: data.tags })} />
             <ApplyBtn applied={applied.moods} disabled={mutation.isPending}
@@ -157,7 +153,7 @@ function LastFMTab({ artist }) {
       {/* Apply all */}
       {data.tags.length > 0 && data.bio && (
         <button
-          onClick={() => mutation.mutate({ tags: data.tags, styles: data.tags, moods: data.tags, bio: data.bio, similar: data.similar })}
+          onClick={() => mutation.mutate({ styles: data.tags, moods: data.tags, bio: data.bio, similar: data.similar })}
           disabled={mutation.isPending}
           className="w-full bg-plex-orange text-plex-dark font-semibold py-2 rounded text-sm hover:opacity-90 disabled:opacity-50"
         >
@@ -381,6 +377,7 @@ async function applyMB(ratingKey, { country, genres }) {
 
 function MBTab({ artist }) {
   const [applied, setApplied] = useState({ country: false, genres: false })
+  const [selectedGenre, setSelectedGenre] = useState(null)
 
   const mbid = artist.mbid || (artist.guid?.startsWith('mbid://') ? artist.guid.replace('mbid://', '') : null)
   const mbUrl = mbid ? `https://musicbrainz.org/artist/${mbid}` : null
@@ -437,27 +434,46 @@ function MBTab({ artist }) {
       </div>
 
       {/* Genres */}
-      {mb.genres?.length > 0 && (
-        <div className="rounded-lg border border-plex-border p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex-1">
-              <p className="text-xs text-plex-muted mb-2">Géneros <span className="text-plex-muted/60">(se mergeán con los existentes)</span></p>
-              <div className="flex flex-wrap gap-1.5">
-                {mb.genres.slice(0, 8).map(g => (
-                  <TagChip key={g.name}>{g.name} <span className="opacity-50 text-[10px]">{g.count}</span></TagChip>
-                ))}
+      {mb.genres?.length > 0 && (() => {
+        const chosen = selectedGenre ?? mb.genres[0].name
+        return (
+          <div className="rounded-lg border border-plex-border p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1">
+                <p className="text-xs text-plex-muted mb-2">
+                  Géneros <span className="text-plex-muted/60">— selecciona el que quieres aplicar</span>
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {mb.genres.slice(0, 10).map(g => {
+                    const isSelected = g.name === chosen
+                    return (
+                      <button
+                        key={g.name}
+                        onClick={() => setSelectedGenre(g.name)}
+                        className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'bg-plex-orange/20 text-plex-orange border border-plex-orange/60 ring-1 ring-plex-orange/40'
+                            : 'bg-plex-border text-gray-300 hover:border-plex-orange/40 border border-transparent'
+                        }`}
+                      >
+                        {g.name}
+                        <span className={`text-[10px] ${isSelected ? 'opacity-70' : 'opacity-40'}`}>{g.count}</span>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
+              <ApplyBtn applied={applied.genres} disabled={mutation.isPending}
+                label="Aplicar género"
+                onClick={() => mutation.mutate({ genres: [chosen] })} />
             </div>
-            <ApplyBtn applied={applied.genres} disabled={mutation.isPending}
-              label="Aplicar géneros"
-              onClick={() => mutation.mutate({ genres: mb.genres.slice(0, 8).map(g => g.name) })} />
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {mb.country && mb.genres?.length > 0 && (
         <button
-          onClick={() => mutation.mutate({ country: mb.country, genres: mb.genres.slice(0, 8).map(g => g.name) })}
+          onClick={() => mutation.mutate({ country: mb.country, genres: [selectedGenre ?? mb.genres[0].name] })}
           disabled={mutation.isPending || (applied.country && applied.genres)}
           className="w-full bg-plex-orange text-plex-dark font-semibold py-2 rounded text-sm hover:opacity-90 disabled:opacity-50"
         >

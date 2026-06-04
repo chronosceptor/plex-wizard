@@ -8,6 +8,7 @@ import ListeningStats from './pages/ListeningStats'
 import PlaylistGenerator from './pages/PlaylistGenerator'
 import Artists from './pages/Artists'
 import ArtistDetail from './pages/ArtistDetail'
+import GenreManager from './pages/GenreManager'
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="playlists" element={<PlaylistGenerator />} />
           <Route path="artists" element={<Artists />} />
           <Route path="artists/:ratingKey" element={<ArtistDetail />} />
+          <Route path="genres" element={<GenreManager />} />
         </Route>
       </Routes>
     </BrowserRouter>

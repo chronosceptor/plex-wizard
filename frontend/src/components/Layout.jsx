@@ -7,6 +7,7 @@ const navItems = [
   { to: '/', label: 'Dashboard' },
   { divider: true },
   { to: '/artists', label: 'Artistas' },
+  { to: '/genres', label: 'Géneros' },
   { to: '/albums-no-match', label: 'Albums sin match' },
   { to: '/albums', label: 'Albums sin portada' },
   { to: '/tracks', label: 'Tracks incompletos' },
