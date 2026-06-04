@@ -412,9 +412,7 @@ def artist_apply_mb(rating_key: int, payload: ApplyMBPayload):
             kwargs["country[0].tag.locked"] = "1"
 
         if payload.genres:
-            existing = [g.tag for g in (artist.genres or [])]
-            for i, genre in enumerate(_merge_tags(existing, payload.genres)):
-                kwargs[f"genre[{i}].tag.tag"] = genre
+            kwargs["genre[0].tag.tag"] = payload.genres[0]
 
         if not kwargs:
             raise HTTPException(status_code=400, detail="Nada que aplicar")
@@ -528,7 +526,6 @@ def artist_lastfm_data(rating_key: int):
 
 
 class ApplyLastFMPayload(BaseModel):
-    tags:    list[str] | None = None   # applied as genres (merged)
     styles:  list[str] | None = None   # applied as styles (merged)
     moods:   list[str] | None = None   # applied as moods (merged)
     similar: list[str] | None = None   # applied as similar artists (merged)
@@ -541,11 +538,6 @@ def artist_apply_lastfm(rating_key: int, payload: ApplyLastFMPayload):
     try:
         artist = plex.fetchItem(rating_key)
         kwargs: dict = {}
-
-        if payload.tags:
-            existing = [g.tag for g in (artist.genres or [])]
-            for i, tag in enumerate(_merge_tags(existing, payload.tags)):
-                kwargs[f"genre[{i}].tag.tag"] = tag
 
         if payload.styles:
             existing = [s.tag for s in getattr(artist, "styles", []) or []]
@@ -695,9 +687,7 @@ def album_apply_discogs(rating_key: int, payload: ApplyDiscogsPayload):
         album = plex.fetchItem(rating_key)
         kwargs: dict = {}
         if payload.genres:
-            existing = [g.tag for g in (album.genres or [])]
-            for i, tag in enumerate(_merge_tags(existing, payload.genres)):
-                kwargs[f"genre[{i}].tag.tag"] = tag
+            kwargs["genre[0].tag.tag"] = payload.genres[0]
         if payload.styles:
             existing = [s.tag for s in getattr(album, "styles", []) or []]
             for i, style in enumerate(_merge_tags(existing, payload.styles)):
@@ -729,9 +719,7 @@ def artist_apply_discogs(rating_key: int, payload: ApplyDiscogsPayload):
         artist = plex.fetchItem(rating_key)
         kwargs: dict = {}
         if payload.genres:
-            existing = [g.tag for g in (artist.genres or [])]
-            for i, tag in enumerate(_merge_tags(existing, payload.genres)):
-                kwargs[f"genre[{i}].tag.tag"] = tag
+            kwargs["genre[0].tag.tag"] = payload.genres[0]
         if payload.styles:
             existing = [s.tag for s in getattr(artist, "styles", []) or []]
             for i, style in enumerate(_merge_tags(existing, payload.styles)):
@@ -802,6 +790,79 @@ def album_refresh(rating_key: int):
         return {"success": True, "title": album.title}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Genre manager
+# ---------------------------------------------------------------------------
+
+@app.get("/api/genres")
+def list_genres(library: str = Query(...)):
+    """Return all genres with artist counts and artist lists, sorted by count desc."""
+    plex = get_plex()
+    try:
+        section = plex.library.section(library)
+        genre_map: dict[str, list[dict]] = {}
+        no_genre_count = 0
+
+        for a in section.searchArtists():
+            genres = [g.tag for g in (a.genres or [])]
+            entry = {"ratingKey": a.ratingKey, "title": a.title}
+            if genres:
+                for genre in genres:
+                    genre_map.setdefault(genre, []).append(entry)
+            else:
+                no_genre_count += 1
+
+        result = [
+            {
+                "name": name,
+                "count": len(artists),
+                "artists": sorted(artists, key=lambda x: x["title"].lower()),
+            }
+            for name, artists in genre_map.items()
+        ]
+        result.sort(key=lambda x: x["count"], reverse=True)
+        return {"genres": result, "noGenre": no_genre_count}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class ReassignGenrePayload(BaseModel):
+    rating_keys: list[int]
+    old_genre: str
+    new_genre: str
+
+
+@app.post("/api/genres/reassign")
+def reassign_genre(payload: ReassignGenrePayload):
+    """Replace old_genre with new_genre in the full genre list of selected artists."""
+    new_genre = payload.new_genre.strip()
+    old_genre = payload.old_genre.strip()
+    if not new_genre:
+        raise HTTPException(status_code=400, detail="El género no puede estar vacío")
+    plex = get_plex()
+    updated = 0
+    errors = []
+
+    for rk in payload.rating_keys:
+        try:
+            artist = plex.fetchItem(rk)
+            current = [g.tag for g in (artist.genres or [])]
+            if old_genre in current:
+                updated_genres = [new_genre if g == old_genre else g for g in current]
+            else:
+                updated_genres = current + [new_genre]
+            # Deduplicate while preserving order
+            seen: set[str] = set()
+            deduped = [g for g in updated_genres if not (g in seen or seen.add(g))]
+            kwargs = {f"genre[{i}].tag.tag": g for i, g in enumerate(deduped)}
+            artist.edit(**kwargs)
+            updated += 1
+        except Exception as e:
+            errors.append({"ratingKey": rk, "error": str(e)})
+
+    return {"updated": updated, "errors": errors}
 
 
 # ---------------------------------------------------------------------------

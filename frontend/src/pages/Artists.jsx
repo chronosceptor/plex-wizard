@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useScan } from '../context/ScanContext'
 import EnrichModal from '../components/EnrichModal'
 import AutoMatchModal from '../components/AutoMatchModal'
@@ -35,14 +35,26 @@ function Dot({ ok, title, count }) {
 export default function Artists() {
   const { library } = useScan()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
 
-  const [search, setSearch]         = useState('')
-  const [filter, setFilter]         = useState('all')
-  const [page, setPage]             = useState(1)
+  const search = searchParams.get('q') ?? ''
+  const filter = searchParams.get('filter') ?? 'all'
+  const page   = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10))
+
+  function updateParams(updates) {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      for (const [k, v] of Object.entries(updates)) {
+        if (v == null || v === '' || v === 'all' || v === 1 || v === '1') next.delete(k)
+        else next.set(k, String(v))
+      }
+      return next
+    }, { replace: true })
+  }
+
   const [enrichItem, setEnrichItem] = useState(null)
   const [autoItem, setAutoItem]     = useState(null)
   const [fixItem, setFixItem]       = useState(null)
-  // Local overrides applied after modal actions to show changes immediately
   const [overrides, setOverrides]   = useState({})
 
   const { data: plexInfo } = useQuery({
@@ -73,7 +85,6 @@ export default function Artists() {
     return `https://app.plex.tv/desktop/#!/server/${plexInfo.machineIdentifier}/details?key=${key}&context=source%3Acontent.library~0~0`
   }
 
-  // After any modal closes, fetch fresh status for that artist and update local state
   const refreshArtist = useCallback(async (ratingKey) => {
     if (!ratingKey) return
     try {
@@ -89,7 +100,6 @@ export default function Artists() {
   function closeAuto(key) { setAutoItem(null); refreshArtist(key || autoItem?.ratingKey) }
   function closeFix(key)  { setFixItem(null);  refreshArtist(key || fixItem?.ratingKey)  }
 
-  // Merge server data with local overrides
   const merged = useMemo(() =>
     artists.map(a => ({ ...a, ...(overrides[a.ratingKey] || {}) })),
     [artists, overrides]
@@ -113,11 +123,11 @@ export default function Artists() {
     return list
   }, [merged, search, filter])
 
-  const totalPages  = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const currentPage = Math.min(page, totalPages)
-  const pageItems   = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
-
-  function resetPage() { setPage(1) }
+  // When searching, show all results without pagination
+  const isSearching  = search.trim() !== ''
+  const totalPages   = isSearching ? 1 : Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const currentPage  = isSearching ? 1 : Math.min(page, totalPages)
+  const pageItems    = isSearching ? filtered : filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   if (!library) return (
     <div className="flex items-center justify-center h-64">
@@ -135,14 +145,15 @@ export default function Artists() {
       {/* Search + filters */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <input
-          type="text" value={search}
-          onChange={e => { setSearch(e.target.value); resetPage() }}
+          type="text"
+          value={search}
+          onChange={e => updateParams({ q: e.target.value, page: null })}
           placeholder="Buscar artista..."
           className="flex-1 bg-plex-dark border border-plex-border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-plex-orange"
         />
         <div className="flex flex-wrap gap-1.5">
           {FILTERS.map(f => (
-            <button key={f.id} onClick={() => { setFilter(f.id); resetPage() }}
+            <button key={f.id} onClick={() => updateParams({ filter: f.id, page: null })}
               className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
                 filter === f.id ? 'bg-plex-orange text-plex-dark' : 'border border-plex-border text-plex-muted hover:text-white hover:border-white'
               }`}
@@ -164,7 +175,11 @@ export default function Artists() {
           <div className="flex gap-4 text-xs text-plex-muted">
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-400 inline-block" /> OK</span>
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" /> Falta</span>
-            <span className="ml-auto">{filtered.length} artistas · pág. {currentPage}/{totalPages}</span>
+            <span className="ml-auto">
+              {isSearching
+                ? `${filtered.length} resultado${filtered.length !== 1 ? 's' : ''}`
+                : `${filtered.length} artistas · pág. ${currentPage}/${totalPages}`}
+            </span>
           </div>
 
           <div className="bg-plex-card border border-plex-border rounded-xl overflow-hidden">
@@ -266,14 +281,14 @@ export default function Artists() {
             </table>
           </div>
 
-          {totalPages > 1 && (
+          {!isSearching && totalPages > 1 && (
             <div className="flex items-center justify-center gap-2">
-              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}
+              <button onClick={() => updateParams({ page: currentPage - 1 })} disabled={currentPage === 1}
                 className="px-3 py-1.5 rounded border border-plex-border text-sm text-plex-muted hover:text-white hover:border-white disabled:opacity-30 transition-colors">
                 ← Anterior
               </button>
               <span className="text-sm text-plex-muted">{currentPage} / {totalPages}</span>
-              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}
+              <button onClick={() => updateParams({ page: currentPage + 1 })} disabled={currentPage === totalPages}
                 className="px-3 py-1.5 rounded border border-plex-border text-sm text-plex-muted hover:text-white hover:border-white disabled:opacity-30 transition-colors">
                 Siguiente →
               </button>

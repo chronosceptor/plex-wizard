@@ -42,6 +42,7 @@ frontend/src/
   pages/
     Artists.jsx             # Tabla de artistas con filtros + acciones modales
     ArtistDetail.jsx        # Detalle artista + tabla de albums con status dots
+    GenreManager.jsx        # Gestión de géneros: ver/reasignar artistas entre géneros
 ```
 
 ## Arquitectura de modales
@@ -67,6 +68,13 @@ const refreshArtist = useCallback(async (ratingKey) => {
   if (res.ok) setOverrides(prev => ({ ...prev, [ratingKey]: await res.json() }))
 }, [])
 ```
+
+## Genre Manager
+
+- `/api/genres` itera TODOS los géneros por artista — un artista con ["Electronic","Psytrance"] aparece en ambos.
+- Para reasignar: leer lista completa → reemplazar `old_genre` → escribir todo con `{f"genre[{i}].tag.tag": g for i, g in enumerate(deduped)}`. No usar solo `genre[0].tag.tag` (pisa géneros incorrectos).
+- Plex tarda ~1.2s en indexar después de `artist.edit()` — usar `setTimeout(1200)` antes de `invalidateQueries`.
+- Cambios de Genre Manager NO se reflejan en `/api/artists` (usa scan cache) hasta nuevo scan.
 
 ## Distinción Discogs artista vs album
 
@@ -96,6 +104,8 @@ function plexArtistUrl(ratingKey) {
 - Estado de "aplicado" (`applied`) local en cada tab/modal — no persiste entre aperturas del modal. Se resetea al reabrir.
 - Errores de API se muestran inline con `text-red-400 text-sm`.
 - Loading states con `animate-pulse`.
+- `useSearchParams` para estado de paginación/búsqueda/filtro — preserva URL al navegar; back button restaura posición.
+- Cuando hay búsqueda activa, mostrar TODOS los resultados filtrados sin paginar — datos ya están en memoria.
 
 ## Seguridad
 
