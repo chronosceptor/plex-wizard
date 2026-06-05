@@ -5,6 +5,24 @@ Todos los cambios notables de este proyecto se documentan aquí.
 ## [Unreleased]
 
 ### Added
+- **Compound Artists filter** (`Artists.jsx`): new "Compound" tab that auto-detects artist names containing separators (`&`, `/`, `feat.`, `+`, `vs.`, `And`, `x`, `×`, `,`). Shows each compound artist with parsed components; if a component exists in the library as a standalone artist, displays `→ Go to artist` link to their detail page; otherwise shows external MB/Discogs/Last.fm search links.
+- **Tri-state compound logic** (`isEffectivelyCompound`): `is_single` overrides auto-detection for band names like "Tiger & Woods" (single artist with `&` in name); `is_compound` manually forces compound for names not caught by regex; auto-detection is the default.
+- **SQLite columns `is_compound` / `is_single`** in `artist_links` table — migrated automatically at startup via `ALTER TABLE ADD COLUMN`.
+- **`PUT /api/artist/{rk}/links/compound`** and **`PUT /api/artist/{rk}/links/single`**: save compound/single-artist flags per artist.
+- **`PUT /api/artists/bulk-compound`**: flag multiple artists as compound in one request.
+- **`PUT /api/artist/{rk}/fix-match-mbid?uuid=`**: apply a MusicBrainz match directly by UUID — searches Plex results by UUID first, then by artist name as fallback.
+- **Manual ID/name entry in all three link modals**: DiscogsLinkModal accepts a raw Discogs artist ID; LastFMLinkModal accepts an exact Last.fm artist name; FixMatchModal accepts a MusicBrainz UUID — all bypass the search results list.
+- **Search box in DiscogsLinkModal**: query is now editable (pre-filled with artist name), triggering a fresh search. Returns up to 10 candidates (was 5).
+- **Current MBID status bar in FixMatchModal**: shows linked UUID with direct MB ↗ link when artist already has an MBID.
+- **`db.set_compound()` / `db.set_single()` / `db.bulk_set_compound()`**: new db.py helpers.
+
+### Changed
+- **`GET /api/artist/{rk}/discogs-search`**: now accepts optional `?q=` param to search with a custom term instead of the Plex artist name.
+- **`No Match` filter**: now also excludes artists that are effectively compound (auto-detected or manually flagged) — no manual action required to clean up collaboration entries.
+- **`/api/artists` and `/api/artist/{rk}/status`**: now return `is_compound` and `is_single` fields.
+- **FixMatchModal**: all text translated to English (was partially Spanish: "Buscar", "Aplicar", "Sin resultados", "O refrescar…").
+
+### Fixed
 - **SQLite persistence layer** (`backend/db.py`): stores per-artist service links — `discogs_id` (int) and `lastfm_name` (text) keyed by Plex `ratingKey`. File `artist_links.db` is gitignored. `db.init_db()` called at FastAPI startup.
 - **DiscogsLinkModal**: new component that auto-searches Discogs when opened, shows candidates with thumbnail, and saves the selected `discogs_id` to SQLite. Includes "Remove" option for already-linked artists.
 - **LastFMLinkModal**: new component with pre-filled search input (Plex artist name), searches Last.fm `artist.search` API, shows candidates with listener counts, and saves the canonical `lastfm_name` to SQLite.

@@ -4,6 +4,7 @@ import { useQuery, useMutation } from '@tanstack/react-query'
 export default function LastFMLinkModal({ artist, onClose }) {
   const [query, setQuery]           = useState(artist.lastfm_name || artist.title)
   const [searchTerm, setSearchTerm] = useState(artist.lastfm_name || artist.title)
+  const [manualName, setManualName] = useState('')
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['lastfm-search', searchTerm],
@@ -47,6 +48,11 @@ export default function LastFMLinkModal({ artist, onClose }) {
     if (query.trim()) setSearchTerm(query.trim())
   }
 
+  function handleManualLink(e) {
+    e.preventDefault()
+    if (manualName.trim()) link.mutate(manualName.trim())
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
@@ -67,6 +73,7 @@ export default function LastFMLinkModal({ artist, onClose }) {
         </div>
 
         <div className="p-4 space-y-3">
+          {/* Current link */}
           {artist.lastfm_name && (
             <div className="flex items-center justify-between p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-sm">
               <span className="text-green-400">Currently linked: {artist.lastfm_name}</span>
@@ -80,22 +87,43 @@ export default function LastFMLinkModal({ artist, onClose }) {
             </div>
           )}
 
+          {/* Search box */}
           <form onSubmit={handleSearch} className="flex gap-2">
             <input
               type="text"
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Search Last.fm..."
-              className="flex-1 bg-plex-dark border border-plex-border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-plex-orange"
+              className="flex-1 bg-plex-dark border border-plex-border rounded-lg px-3 py-2 text-sm text-white placeholder-plex-muted focus:outline-none focus:border-plex-orange"
             />
             <button
               type="submit"
-              className="px-3 py-1.5 bg-plex-orange text-plex-dark text-sm font-semibold rounded hover:opacity-90 transition-opacity"
+              disabled={isLoading || !query.trim()}
+              className="px-4 py-2 bg-plex-orange hover:bg-plex-orange/80 text-white text-sm rounded-lg disabled:opacity-50 transition-colors"
             >
               Search
             </button>
           </form>
 
+          {/* Manual name entry */}
+          <form onSubmit={handleManualLink} className="flex gap-2 items-center">
+            <input
+              type="text"
+              value={manualName}
+              onChange={e => setManualName(e.target.value)}
+              placeholder="Or enter exact Last.fm artist name..."
+              className="flex-1 bg-plex-dark border border-plex-border rounded-lg px-3 py-2 text-sm text-white placeholder-plex-muted focus:outline-none focus:border-plex-orange"
+            />
+            <button
+              type="submit"
+              disabled={link.isPending || !manualName.trim()}
+              className="px-4 py-2 bg-plex-dark border border-plex-border hover:border-plex-orange text-white text-sm rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap"
+            >
+              Link name
+            </button>
+          </form>
+
+          {/* Status messages */}
           {isLoading && (
             <p className="text-plex-muted text-sm animate-pulse">Searching Last.fm...</p>
           )}
@@ -103,11 +131,11 @@ export default function LastFMLinkModal({ artist, onClose }) {
           {(link.error || remove.error) && (
             <p className="text-red-400 text-sm">{(link.error || remove.error).message}</p>
           )}
-
           {!isLoading && data?.results?.length === 0 && (
             <p className="text-plex-muted text-sm">No results found for "{searchTerm}".</p>
           )}
 
+          {/* Results list */}
           <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
             {data?.results?.map(r => (
               <button

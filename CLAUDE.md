@@ -54,20 +54,61 @@ frontend/src/
 
 ## Service Links (SQLite)
 
-- `artist_links.db` stores `discogs_id` (int) and `lastfm_name` (text) per `ratingKey` — file is gitignored.
+- `artist_links.db` stores `discogs_id`, `lastfm_name`, `is_compound`, `is_single` per `ratingKey` — file is gitignored.
 - MusicBrainz → stored in Plex guids (`mbid://uuid`). Discogs/Last.fm → stored in SQLite only.
-- `set_discogs()` and `set_lastfm()` are independent — updating one never overwrites the other field.
+- `set_discogs()`, `set_lastfm()`, `set_compound()`, `set_single()` are all independent — updating one never overwrites other fields.
 - `/api/artists` always merges fresh SQLite links on top of Plex scan cache. Don't cache the merged result.
-- `/api/artist/{rk}/status` returns `discogs_id` + `lastfm_name` so the `refreshArtist` override pattern picks them up immediately after modal close.
-- `db.init_db()` called at FastAPI startup — creates table if not exists, safe to call every time.
+- `/api/artist/{rk}/status` returns all SQLite fields so the `refreshArtist` override pattern picks them up immediately after modal close.
+- `db.init_db()` called at FastAPI startup — creates table + runs `ALTER TABLE ADD COLUMN` migrations for new columns, safe to call every time.
+- New endpoints: `PUT /api/artist/{rk}/links/compound`, `PUT /api/artist/{rk}/links/single`, `PUT /api/artists/bulk-compound`, `PUT /api/artist/{rk}/fix-match-mbid`.
 
 ## Artists page (current)
 
-Filters: All / No Match / No MusicBrainz / No Discogs / No Last.fm
+Filters: All / No Match / No MusicBrainz / No Discogs / No Last.fm / **Compound**
 Columns: Artist | MusicBrainz | Discogs | Last.fm | Plex
-"No Match" = none of the three services linked (`isMatched=false` AND no `discogs_id` AND no `lastfm_name`).
+"No Match" = none of the three services linked AND not effectively compound (`!isEffectivelyCompound(a)`).
+
+## Compound Artists
+
+Compound = artist entry in Plex that is actually two or more artists (e.g. "Burial + Four Tet", "Tom Misch & Yussef Dayes").
+
+### Detection
+`looksCompound(title)` splits by: ` And `, ` & `, ` / `, ` x `, ` × `, ` feat. `, ` featuring `, ` + `, ` vs. `, ` , `
+
+### Tri-state logic (`isEffectivelyCompound`)
+```js
+function isEffectivelyCompound(a) {
+  if (a.is_single)   return false   // user override: "this IS a single artist despite the name"
+  if (a.is_compound) return true    // user manually flagged as compound
+  return looksCompound(a.title)     // auto-detected by regex
+}
+```
+- `is_single = true` → use case: "Tiger & Woods" is a duo/band name, not two separate artists
+- `is_compound = true` → use case: manually flag an artist not caught by regex
+- Auto-detected artists: `no_match` filter excludes them automatically, no manual action needed
+
+### Component breakdown (Compound filter only)
+`CompoundComponents` parses each component and checks if it exists in the artists array (case-insensitive title match):
+- **Found in library** → shows `→ Go to artist` (Link to `/artists/{ratingKey}`) so user can map services on the individual artist's page
+- **Not found** → shows external search links (MB ↗ / Discogs ↗ / Last.fm ↗)
+
+### Badges in Artist column
+- `⋱ auto` (amber) — auto-detected; clicking marks `is_single = true`
+- `✓ single` (blue) — `is_single` override active; clicking removes it
+- `⋱` (grey) — not detected; clicking sets `is_compound = true`
+- `⋱ manual` (amber) — manually flagged; clicking removes flag
 
 ## Arquitectura de modales
+
+### Patrón homologado: DiscogsLinkModal / LastFMLinkModal / FixMatchModal
+Los tres modales de linking siguen la misma estructura:
+1. **Current link status bar** (verde) con botón Remove — si ya hay un link activo
+2. **Search box** con botón Search — pre-relleno con el nombre del artista
+3. **Manual entry field** — Discogs: número de ID; Last.fm: nombre exacto; MusicBrainz: UUID
+4. **Results list** — candidatos clicables
+
+El search de Discogs acepta query param `?q=` para búsquedas personalizadas.  
+El fix-match-mbid endpoint busca el UUID en resultados de Plex (primero por UUID como query, luego por nombre del artista).
 
 ### EnrichModal (artistas)
 4 tabs independientes, cada uno gestiona su propio `useQuery`/`useMutation`:

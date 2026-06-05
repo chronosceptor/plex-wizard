@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams, Link } from 'react-router-dom'
 import { useScan } from '../context/ScanContext'
 import AutoMatchModal from '../components/AutoMatchModal'
 import FixMatchModal from '../components/FixMatchModal'
@@ -15,7 +15,30 @@ const FILTERS = [
   { id: 'no_mb',      label: 'No MusicBrainz' },
   { id: 'no_discogs', label: 'No Discogs' },
   { id: 'no_lastfm',  label: 'No Last.fm' },
+  { id: 'compound',   label: 'Compound' },
 ]
+
+// Separators that indicate a compound artist name
+const COMPOUND_RE = /\s+[Aa]nd\s+|\s+&\s+|\s*\/\s+|\s+[Xx×]\s+|\s+[Ff]eat(?:\.?|uring)\s+|\s+\+\s+|\s+[Vv]s\.?\s+|\s+,\s+/
+
+function parseComponents(title) {
+  return title.split(COMPOUND_RE).map(s => s.trim()).filter(Boolean)
+}
+
+function looksCompound(title) {
+  return parseComponents(title).length > 1
+}
+
+// is_single overrides auto-detection; is_compound forces compound for non-detected names
+function isEffectivelyCompound(a) {
+  if (a.is_single)   return false
+  if (a.is_compound) return true
+  return looksCompound(a.title)
+}
+
+function mbSearchUrl(q)      { return `https://musicbrainz.org/search?query=${encodeURIComponent(q)}&type=artist` }
+function discogsSearchUrl(q) { return `https://www.discogs.com/search/?q=${encodeURIComponent(q)}&type=artist` }
+function lastfmSearchUrl(q)  { return `https://www.last.fm/search/artists?q=${encodeURIComponent(q)}` }
 
 function ServiceChip({ href, label, onEdit }) {
   return (
@@ -50,8 +73,56 @@ function LinkBtn({ onClick }) {
   )
 }
 
+// Shows parsed components with: internal artist link if found in library, otherwise external search links
+function CompoundComponents({ title, allArtists }) {
+  const parts = parseComponents(title)
+  if (parts.length <= 1) return null
+
+  return (
+    <div className="mt-1.5 space-y-1.5">
+      {parts.map((part, i) => {
+        const match = allArtists.find(
+          a => a.title.toLowerCase() === part.toLowerCase()
+        )
+        return (
+          <div key={i} className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-plex-muted truncate max-w-[160px]" title={part}>
+              {part}
+            </span>
+            {match ? (
+              <Link
+                to={`/artists/${match.ratingKey}`}
+                className="text-[10px] px-2 py-0.5 rounded border border-plex-orange/40 text-plex-orange hover:bg-plex-orange/10 transition-colors whitespace-nowrap"
+                title="This artist exists in your library — go to their page to map services"
+              >
+                → Go to artist
+              </Link>
+            ) : (
+              <>
+                <a href={mbSearchUrl(part)} target="_blank" rel="noopener noreferrer"
+                  className="text-[10px] px-1.5 py-0.5 rounded border border-plex-border text-plex-muted hover:text-white hover:border-white transition-colors whitespace-nowrap">
+                  MB ↗
+                </a>
+                <a href={discogsSearchUrl(part)} target="_blank" rel="noopener noreferrer"
+                  className="text-[10px] px-1.5 py-0.5 rounded border border-plex-border text-plex-muted hover:text-white hover:border-white transition-colors whitespace-nowrap">
+                  Discogs ↗
+                </a>
+                <a href={lastfmSearchUrl(part)} target="_blank" rel="noopener noreferrer"
+                  className="text-[10px] px-1.5 py-0.5 rounded border border-plex-border text-plex-muted hover:text-white hover:border-white transition-colors whitespace-nowrap">
+                  Last.fm ↗
+                </a>
+              </>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function Artists() {
   const { library } = useScan()
+  const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const search = searchParams.get('q') ?? ''
@@ -119,6 +190,38 @@ export default function Artists() {
   function closeDiscogs(key) { setDiscogsItem(null); refreshArtist(key || discogsItem?.ratingKey) }
   function closeLastfm(key)  { setLastfmItem(null);  refreshArtist(key || lastfmItem?.ratingKey) }
 
+  // Compound manual flag — for names the regex doesn't detect
+  const compoundMutation = useMutation({
+    mutationFn: async ({ ratingKey, is_compound }) => {
+      const res = await fetch(`/api/artist/${ratingKey}/links/compound`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_compound }),
+      })
+      if (!res.ok) throw new Error('Failed')
+      return res.json()
+    },
+    onSuccess: (_, { ratingKey, is_compound }) => {
+      setOverrides(prev => ({ ...prev, [ratingKey]: { ...prev[ratingKey], is_compound } }))
+    },
+  })
+
+  // Single-artist override — marks auto-detected compound as actually a single artist
+  const singleMutation = useMutation({
+    mutationFn: async ({ ratingKey, is_single }) => {
+      const res = await fetch(`/api/artist/${ratingKey}/links/single`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_single }),
+      })
+      if (!res.ok) throw new Error('Failed')
+      return res.json()
+    },
+    onSuccess: (_, { ratingKey, is_single }) => {
+      setOverrides(prev => ({ ...prev, [ratingKey]: { ...prev[ratingKey], is_single } }))
+    },
+  })
+
   const merged = useMemo(() =>
     artists.map(a => ({ ...a, ...(overrides[a.ratingKey] || {}) })),
     [artists, overrides]
@@ -131,10 +234,13 @@ export default function Artists() {
       list = list.filter(a => a.title.toLowerCase().includes(q))
     }
     switch (filter) {
-      case 'no_match':   list = list.filter(a => !a.isMatched && !a.discogs_id && !a.lastfm_name); break
+      case 'no_match':
+        list = list.filter(a => !a.isMatched && !a.discogs_id && !a.lastfm_name && !isEffectivelyCompound(a))
+        break
       case 'no_mb':      list = list.filter(a => !a.isMatched); break
       case 'no_discogs': list = list.filter(a => !a.discogs_id); break
       case 'no_lastfm':  list = list.filter(a => !a.lastfm_name); break
+      case 'compound':   list = list.filter(a => isEffectivelyCompound(a)); break
       default: break
     }
     return list
@@ -219,89 +325,139 @@ export default function Artists() {
                     </td>
                   </tr>
                 )}
-                {pageItems.map(a => (
-                  <tr
-                    key={a.ratingKey}
-                    className="border-b border-plex-border/40 last:border-0 hover:bg-plex-dark/30 transition-colors"
-                  >
-                    {/* Artist */}
-                    <td className="px-4 py-2.5">
-                      <p className="text-sm font-medium truncate max-w-xs">{a.title}</p>
-                      {a.albumCount > 0 && (
-                        <p className="text-xs text-plex-muted">
-                          {a.albumCount} album{a.albumCount !== 1 ? 's' : ''}
-                        </p>
-                      )}
-                    </td>
+                {pageItems.map(a => {
+                  const autoDetected = looksCompound(a.title)
+                  const effectivelyCompound = isEffectivelyCompound(a)
+                  return (
+                    <tr
+                      key={a.ratingKey}
+                      className="border-b border-plex-border/40 last:border-0 hover:bg-plex-dark/30 transition-colors"
+                    >
+                      {/* Artist */}
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-start gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium truncate max-w-xs">{a.title}</p>
+                            {a.albumCount > 0 && (
+                              <p className="text-xs text-plex-muted">
+                                {a.albumCount} album{a.albumCount !== 1 ? 's' : ''}
+                              </p>
+                            )}
+                            {/* Component breakdown — only in compound filter */}
+                            {filter === 'compound' && effectivelyCompound && (
+                              <CompoundComponents title={a.title} allArtists={merged} />
+                            )}
+                          </div>
 
-                    {/* MusicBrainz */}
-                    <td className="px-3 py-2.5">
-                      {a.isMatched ? (
-                        <ServiceChip
-                          href={`https://musicbrainz.org/artist/${a.mbid}`}
-                          label="MusicBrainz"
-                          onEdit={() => setAutoItem(a)}
-                        />
-                      ) : (
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => setAutoItem(a)}
-                            className="text-xs bg-plex-orange/20 text-plex-orange border border-plex-orange/40 hover:bg-plex-orange hover:text-plex-dark px-2 py-0.5 rounded transition-colors font-medium"
-                          >
-                            Auto
-                          </button>
-                          <button
-                            onClick={() => setFixItem(a)}
-                            className="text-xs border border-plex-border text-plex-muted hover:text-white hover:border-white px-2 py-0.5 rounded transition-colors"
-                          >
-                            Fix
-                          </button>
+                          {/* Compound status badge/button */}
+                          {(filter === 'compound' || filter === 'no_match' || filter === 'all') && (
+                            <div className="flex-shrink-0 mt-0.5">
+                              {a.is_single ? (
+                                // User marked as single artist — show badge + undo
+                                <button
+                                  onClick={() => singleMutation.mutate({ ratingKey: a.ratingKey, is_single: false })}
+                                  title="Marked as single artist — click to undo"
+                                  className="text-[10px] px-1.5 py-0.5 rounded border border-blue-500/40 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors whitespace-nowrap"
+                                >
+                                  ✓ single
+                                </button>
+                              ) : autoDetected ? (
+                                // Auto-detected as compound — offer "Not compound" override
+                                <button
+                                  onClick={() => singleMutation.mutate({ ratingKey: a.ratingKey, is_single: true })}
+                                  title="Auto-detected as compound — click if this is actually a single artist"
+                                  className="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors whitespace-nowrap"
+                                >
+                                  ⋱ auto
+                                </button>
+                              ) : (
+                                // Not detected — allow manual compound flag
+                                <button
+                                  onClick={() => compoundMutation.mutate({ ratingKey: a.ratingKey, is_compound: !a.is_compound })}
+                                  title={a.is_compound ? 'Unflag as compound' : 'Flag as compound'}
+                                  className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors whitespace-nowrap ${
+                                    a.is_compound
+                                      ? 'border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
+                                      : 'border-plex-border text-plex-muted hover:text-amber-400 hover:border-amber-500/40'
+                                  }`}
+                                >
+                                  {a.is_compound ? '⋱ manual' : '⋱'}
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </td>
+                      </td>
 
-                    {/* Discogs */}
-                    <td className="px-3 py-2.5">
-                      {a.discogs_id ? (
-                        <ServiceChip
-                          href={`https://www.discogs.com/artist/${a.discogs_id}`}
-                          label="Discogs"
-                          onEdit={() => setDiscogsItem(a)}
-                        />
-                      ) : (
-                        <LinkBtn onClick={() => setDiscogsItem(a)} />
-                      )}
-                    </td>
+                      {/* MusicBrainz */}
+                      <td className="px-3 py-2.5">
+                        {a.isMatched ? (
+                          <ServiceChip
+                            href={`https://musicbrainz.org/artist/${a.mbid}`}
+                            label="MusicBrainz"
+                            onEdit={() => setAutoItem(a)}
+                          />
+                        ) : (
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => setAutoItem(a)}
+                              className="text-xs bg-plex-orange/20 text-plex-orange border border-plex-orange/40 hover:bg-plex-orange hover:text-plex-dark px-2 py-0.5 rounded transition-colors font-medium"
+                            >
+                              Auto
+                            </button>
+                            <button
+                              onClick={() => setFixItem(a)}
+                              className="text-xs border border-plex-border text-plex-muted hover:text-white hover:border-white px-2 py-0.5 rounded transition-colors"
+                            >
+                              Fix
+                            </button>
+                          </div>
+                        )}
+                      </td>
 
-                    {/* Last.fm */}
-                    <td className="px-3 py-2.5">
-                      {a.lastfm_name ? (
-                        <ServiceChip
-                          href={`https://www.last.fm/music/${encodeURIComponent(a.lastfm_name)}`}
-                          label="Last.fm"
-                          onEdit={() => setLastfmItem(a)}
-                        />
-                      ) : (
-                        <LinkBtn onClick={() => setLastfmItem(a)} />
-                      )}
-                    </td>
+                      {/* Discogs */}
+                      <td className="px-3 py-2.5">
+                        {a.discogs_id ? (
+                          <ServiceChip
+                            href={`https://www.discogs.com/artist/${a.discogs_id}`}
+                            label="Discogs"
+                            onEdit={() => setDiscogsItem(a)}
+                          />
+                        ) : (
+                          <LinkBtn onClick={() => setDiscogsItem(a)} />
+                        )}
+                      </td>
 
-                    {/* Plex */}
-                    <td className="text-center py-2.5">
-                      {plexArtistUrl(a.ratingKey) && (
-                        <a
-                          href={plexArtistUrl(a.ratingKey)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title="Open in Plex"
-                          className="text-xs border border-plex-border text-plex-muted hover:text-plex-orange hover:border-plex-orange px-2 py-0.5 rounded transition-colors"
-                        >
-                          Plex ↗
-                        </a>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      {/* Last.fm */}
+                      <td className="px-3 py-2.5">
+                        {a.lastfm_name ? (
+                          <ServiceChip
+                            href={`https://www.last.fm/music/${encodeURIComponent(a.lastfm_name)}`}
+                            label="Last.fm"
+                            onEdit={() => setLastfmItem(a)}
+                          />
+                        ) : (
+                          <LinkBtn onClick={() => setLastfmItem(a)} />
+                        )}
+                      </td>
+
+                      {/* Plex */}
+                      <td className="text-center py-2.5">
+                        {plexArtistUrl(a.ratingKey) && (
+                          <a
+                            href={plexArtistUrl(a.ratingKey)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="Open in Plex"
+                            className="text-xs border border-plex-border text-plex-muted hover:text-plex-orange hover:border-plex-orange px-2 py-0.5 rounded transition-colors"
+                          >
+                            Plex ↗
+                          </a>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

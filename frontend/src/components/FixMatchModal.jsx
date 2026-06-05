@@ -23,6 +23,17 @@ async function applyMatch(type, ratingKey, guid, name) {
   return res.json()
 }
 
+async function applyMbid(ratingKey, uuid) {
+  const res = await fetch(`/api/artist/${ratingKey}/fix-match-mbid?uuid=${encodeURIComponent(uuid)}`, {
+    method: 'PUT',
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || 'MBID not found in Plex search results')
+  }
+  return res.json()
+}
+
 async function refreshItem(type, ratingKey) {
   const res = await fetch(`/api/${type}/${ratingKey}/refresh`, { method: 'PUT' })
   if (!res.ok) {
@@ -39,19 +50,28 @@ function mbLink(guid, type) {
   return `https://musicbrainz.org/${section}/${uuid}`
 }
 
-// item = { ratingKey, title }
+// item = { ratingKey, title, mbid? }
 // type = 'artist' | 'album'
 export default function FixMatchModal({ item, type = 'artist', onClose, onFixed }) {
-  const [query, setQuery] = useState(item.title)
-  const [results, setResults] = useState(null)
+  const [query, setQuery]       = useState(item.title)
+  const [results, setResults]   = useState(null)
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState(null)
   const [appliedGuid, setAppliedGuid] = useState(null)
+  const [manualMbid, setManualMbid] = useState('')
 
   const fixMutation = useMutation({
     mutationFn: ({ guid, name }) => applyMatch(type, item.ratingKey, guid, name),
     onSuccess: (_, vars) => {
       setAppliedGuid(vars.guid)
+      onFixed?.(item.ratingKey)
+    },
+  })
+
+  const mbidMutation = useMutation({
+    mutationFn: (uuid) => applyMbid(item.ratingKey, uuid),
+    onSuccess: (_, uuid) => {
+      setAppliedGuid(`mbid://${uuid}`)
       onFixed?.(item.ratingKey)
     },
   })
@@ -75,8 +95,14 @@ export default function FixMatchModal({ item, type = 'artist', onClose, onFixed 
     }
   }
 
-  const isLoading = fixMutation.isPending || refreshMutation.isPending
-  const typeLabel = type === 'album' ? 'album' : 'artista'
+  function handleManualMbid(e) {
+    e.preventDefault()
+    const uuid = manualMbid.trim()
+    if (uuid) mbidMutation.mutate(uuid)
+  }
+
+  const isLoading = fixMutation.isPending || refreshMutation.isPending || mbidMutation.isPending
+  const currentMbid = item.mbid
 
   return (
     <div
@@ -87,7 +113,7 @@ export default function FixMatchModal({ item, type = 'artist', onClose, onFixed 
         {/* Header */}
         <div className="flex items-start justify-between p-5 border-b border-plex-border">
           <div>
-            <p className="text-xs text-plex-muted mb-0.5">Fix match · {typeLabel}</p>
+            <p className="text-xs text-plex-muted mb-0.5">Fix match · {type}</p>
             <h2 className="font-bold text-lg">{item.title}</h2>
             {item.artist && <p className="text-sm text-plex-muted">{item.artist}</p>}
           </div>
@@ -96,29 +122,71 @@ export default function FixMatchModal({ item, type = 'artist', onClose, onFixed 
 
         {/* Body */}
         <div className="p-5 space-y-4">
+          {/* Current MBID status */}
+          {currentMbid && (
+            <div className="flex items-center justify-between p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-sm">
+              <span className="text-green-400 font-mono text-xs">Currently linked: {currentMbid}</span>
+              <a
+                href={mbLink(`mbid://${currentMbid}`, type)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-plex-orange hover:underline text-xs flex-shrink-0 ml-2"
+              >
+                MB ↗
+              </a>
+            </div>
+          )}
+
+          {/* Search box */}
           <form onSubmit={handleSearch} className="flex gap-2">
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="flex-1 bg-plex-dark border border-plex-border rounded px-3 py-2 text-sm focus:outline-none focus:border-plex-orange"
-              placeholder={`Nombre del ${typeLabel}...`}
+              placeholder="Search by artist name..."
+              className="flex-1 bg-plex-dark border border-plex-border rounded-lg px-3 py-2 text-sm text-white placeholder-plex-muted focus:outline-none focus:border-plex-orange"
             />
             <button
               type="submit"
               disabled={searching || !query.trim()}
-              className="bg-plex-orange text-plex-dark font-semibold px-4 py-2 rounded text-sm hover:opacity-90 disabled:opacity-50"
+              className="px-4 py-2 bg-plex-orange hover:bg-plex-orange/80 text-white text-sm rounded-lg disabled:opacity-50 transition-colors"
             >
-              {searching ? '...' : 'Buscar'}
+              {searching ? '...' : 'Search'}
             </button>
           </form>
 
+          {/* Manual MBID entry — only for artists */}
+          {type === 'artist' && (
+            <form onSubmit={handleManualMbid} className="flex gap-2 items-center">
+              <input
+                type="text"
+                value={manualMbid}
+                onChange={e => setManualMbid(e.target.value)}
+                placeholder="Or enter MusicBrainz UUID directly..."
+                className="flex-1 bg-plex-dark border border-plex-border rounded-lg px-3 py-2 text-sm text-white placeholder-plex-muted focus:outline-none focus:border-plex-orange font-mono"
+              />
+              <button
+                type="submit"
+                disabled={isLoading || !manualMbid.trim()}
+                className="px-4 py-2 bg-plex-dark border border-plex-border hover:border-plex-orange text-white text-sm rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap"
+              >
+                Apply ID
+              </button>
+            </form>
+          )}
+
           {searchError && <p className="text-red-400 text-sm">{searchError}</p>}
+          {fixMutation.isError && (
+            <p className="text-red-400 text-sm">Error: {fixMutation.error.message}</p>
+          )}
+          {mbidMutation.isError && (
+            <p className="text-red-400 text-sm">Error: {mbidMutation.error.message}</p>
+          )}
 
           {results !== null && (
             <div className="space-y-2">
               <p className="text-xs text-plex-muted">
-                {results.length === 0 ? 'Sin resultados' : `${results.length} resultados`}
+                {results.length === 0 ? 'No results' : `${results.length} results`}
               </p>
               <div className="space-y-1.5 max-h-64 overflow-y-auto">
                 {results.map((r) => {
@@ -155,7 +223,7 @@ export default function FixMatchModal({ item, type = 'artist', onClose, onFixed 
                           )}
                           {r.guid && (
                             <button
-                              title="Click para copiar MBID"
+                              title="Click to copy MBID"
                               onClick={(e) => {
                                 e.stopPropagation()
                                 const uuid = r.guid.replace('mbid://', '')
@@ -177,7 +245,7 @@ export default function FixMatchModal({ item, type = 'artist', onClose, onFixed 
                             : 'bg-plex-orange text-plex-dark hover:opacity-90 disabled:opacity-50'
                         }`}
                       >
-                        {isApplied ? 'Aplicado ✓' : 'Aplicar'}
+                        {isApplied ? 'Applied ✓' : 'Apply'}
                       </button>
                     </div>
                   )
@@ -186,20 +254,17 @@ export default function FixMatchModal({ item, type = 'artist', onClose, onFixed 
             </div>
           )}
 
-          {fixMutation.isError && (
-            <p className="text-red-400 text-sm">Error: {fixMutation.error.message}</p>
-          )}
-
+          {/* Refresh metadata fallback */}
           <div className="border-t border-plex-border pt-3">
-            <p className="text-xs text-plex-muted mb-2">O refrescar metadata desde el agente actual:</p>
+            <p className="text-xs text-plex-muted mb-2">Or refresh metadata from the current agent:</p>
             <button
               onClick={() => refreshMutation.mutate()}
               disabled={isLoading}
-              className="w-full border border-plex-border rounded py-2 text-sm text-plex-muted hover:text-white hover:border-white transition-colors disabled:opacity-50"
+              className="w-full border border-plex-border rounded-lg py-2 text-sm text-plex-muted hover:text-white hover:border-white transition-colors disabled:opacity-50"
             >
-              {refreshMutation.isPending ? 'Refrescando...'
-                : refreshMutation.isSuccess ? 'Refresh enviado ✓'
-                : 'Refrescar metadata'}
+              {refreshMutation.isPending ? 'Refreshing...'
+                : refreshMutation.isSuccess ? 'Refresh sent ✓'
+                : 'Refresh metadata'}
             </button>
             {refreshMutation.isError && (
               <p className="text-red-400 text-xs mt-1">{refreshMutation.error.message}</p>

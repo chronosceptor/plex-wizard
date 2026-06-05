@@ -123,6 +123,8 @@ def list_all_artists(library: str = Query(...)):
             **a,
             "discogs_id":  all_links.get(a["ratingKey"], {}).get("discogs_id"),
             "lastfm_name": all_links.get(a["ratingKey"], {}).get("lastfm_name"),
+            "is_compound": all_links.get(a["ratingKey"], {}).get("is_compound", False),
+            "is_single":   all_links.get(a["ratingKey"], {}).get("is_single", False),
         }
         for a in plex_artists
     ]
@@ -168,6 +170,8 @@ def artist_status(rating_key: int):
             "hasBio":      bool((a.summary or "").strip()),
             "discogs_id":  links["discogs_id"],
             "lastfm_name": links["lastfm_name"],
+            "is_compound": links["is_compound"],
+            "is_single":   links["is_single"],
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -264,6 +268,37 @@ def set_lastfm_link(rating_key: int, payload: LastFMLinkPayload):
     name = payload.lastfm_name.strip() if payload.lastfm_name else None
     db.set_lastfm(rating_key, name)
     return {"success": True, "lastfm_name": name}
+
+
+class CompoundPayload(BaseModel):
+    is_compound: bool
+
+
+@app.put("/api/artist/{rating_key}/links/compound")
+def set_compound_link(rating_key: int, payload: CompoundPayload):
+    db.set_compound(rating_key, payload.is_compound)
+    return {"success": True, "is_compound": payload.is_compound}
+
+
+class SinglePayload(BaseModel):
+    is_single: bool
+
+
+@app.put("/api/artist/{rating_key}/links/single")
+def set_single_link(rating_key: int, payload: SinglePayload):
+    db.set_single(rating_key, payload.is_single)
+    return {"success": True, "is_single": payload.is_single}
+
+
+class BulkCompoundPayload(BaseModel):
+    rating_keys: list[int]
+    is_compound: bool = True
+
+
+@app.put("/api/artists/bulk-compound")
+def bulk_compound_link(payload: BulkCompoundPayload):
+    db.bulk_set_compound(payload.rating_keys, payload.is_compound)
+    return {"success": True, "count": len(payload.rating_keys)}
 
 
 @app.get("/api/lastfm/search")
@@ -403,6 +438,27 @@ def artist_fix_match(rating_key: int, payload: FixMatchPayload):
             raise HTTPException(status_code=404, detail="Match no encontrado")
         artist.fixMatch(searchResult=target)
         return {"success": True, "applied": payload.name, "guid": payload.guid}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/api/artist/{rating_key}/fix-match-mbid")
+def artist_fix_match_mbid(rating_key: int, uuid: str):
+    """Apply a MusicBrainz match directly by UUID — searches Plex results for the MBID."""
+    plex = get_plex()
+    try:
+        artist = plex.fetchItem(rating_key)
+        guid = f"mbid://{uuid.strip()}"
+        # Try by UUID as search term first, then fall back to artist name
+        for query in (uuid.strip(), artist.title):
+            results = artist.matches(title=query)
+            target = next((r for r in results if r.guid == guid), None)
+            if target:
+                artist.fixMatch(searchResult=target)
+                return {"success": True, "guid": guid}
+        raise HTTPException(status_code=404, detail="MBID not found in Plex search results. Try searching by name first.")
     except HTTPException:
         raise
     except Exception as e:
@@ -643,12 +699,13 @@ def artist_wikidata_data(rating_key: int):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/artist/{rating_key}/discogs-search")
-def artist_discogs_search(rating_key: int):
+def artist_discogs_search(rating_key: int, q: str | None = None):
     """Search Discogs for this artist and return candidates."""
     plex = get_plex()
     try:
         artist = plex.fetchItem(rating_key)
-        candidates = dg_search_artists(artist.title, limit=5)
+        query = q.strip() if q and q.strip() else artist.title
+        candidates = dg_search_artists(query, limit=10)
         return {"artistTitle": artist.title, "candidates": candidates}
     except HTTPException:
         raise

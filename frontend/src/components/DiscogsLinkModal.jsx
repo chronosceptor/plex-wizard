@@ -1,10 +1,16 @@
+import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 
 export default function DiscogsLinkModal({ artist, onClose }) {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['discogs-search', artist.ratingKey],
+  const [searchQuery, setSearchQuery] = useState(artist.title)
+  const [activeQuery, setActiveQuery] = useState(artist.title)
+  const [manualId, setManualId] = useState('')
+
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['discogs-search', artist.ratingKey, activeQuery],
     queryFn: async () => {
-      const res = await fetch(`/api/artist/${artist.ratingKey}/discogs-search`)
+      const params = new URLSearchParams({ q: activeQuery })
+      const res = await fetch(`/api/artist/${artist.ratingKey}/discogs-search?${params}`)
       if (!res.ok) throw new Error('Search failed')
       return res.json()
     },
@@ -37,6 +43,17 @@ export default function DiscogsLinkModal({ artist, onClose }) {
     onSuccess: () => onClose(artist.ratingKey),
   })
 
+  function handleSearch(e) {
+    e.preventDefault()
+    if (searchQuery.trim()) setActiveQuery(searchQuery.trim())
+  }
+
+  function handleManualLink(e) {
+    e.preventDefault()
+    const id = parseInt(manualId, 10)
+    if (!isNaN(id) && id > 0) link.mutate(id)
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
@@ -57,6 +74,7 @@ export default function DiscogsLinkModal({ artist, onClose }) {
         </div>
 
         <div className="p-4 space-y-3">
+          {/* Current link */}
           {artist.discogs_id && (
             <div className="flex items-center justify-between p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-sm">
               <span className="text-green-400">Currently linked: Discogs #{artist.discogs_id}</span>
@@ -70,6 +88,44 @@ export default function DiscogsLinkModal({ artist, onClose }) {
             </div>
           )}
 
+          {/* Search box */}
+          <form onSubmit={handleSearch} className="flex gap-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search Discogs..."
+              className="flex-1 bg-plex-dark border border-plex-border rounded-lg px-3 py-2 text-sm text-white placeholder-plex-muted focus:outline-none focus:border-plex-orange"
+            />
+            <button
+              type="submit"
+              disabled={isLoading || !searchQuery.trim()}
+              className="px-4 py-2 bg-plex-orange hover:bg-plex-orange/80 text-white text-sm rounded-lg disabled:opacity-50 transition-colors"
+            >
+              Search
+            </button>
+          </form>
+
+          {/* Manual ID entry */}
+          <form onSubmit={handleManualLink} className="flex gap-2 items-center">
+            <input
+              type="number"
+              value={manualId}
+              onChange={e => setManualId(e.target.value)}
+              placeholder="Or enter Discogs artist ID..."
+              min="1"
+              className="flex-1 bg-plex-dark border border-plex-border rounded-lg px-3 py-2 text-sm text-white placeholder-plex-muted focus:outline-none focus:border-plex-orange"
+            />
+            <button
+              type="submit"
+              disabled={link.isPending || !manualId}
+              className="px-4 py-2 bg-plex-dark border border-plex-border hover:border-plex-orange text-white text-sm rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap"
+            >
+              Link ID
+            </button>
+          </form>
+
+          {/* Status messages */}
           {isLoading && (
             <p className="text-plex-muted text-sm animate-pulse">Searching Discogs...</p>
           )}
@@ -77,12 +133,12 @@ export default function DiscogsLinkModal({ artist, onClose }) {
           {(link.error || remove.error) && (
             <p className="text-red-400 text-sm">{(link.error || remove.error).message}</p>
           )}
-
           {!isLoading && data?.candidates?.length === 0 && (
-            <p className="text-plex-muted text-sm">No results found for "{artist.title}".</p>
+            <p className="text-plex-muted text-sm">No results found for "{activeQuery}".</p>
           )}
 
-          <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+          {/* Candidates list */}
+          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
             {data?.candidates?.map(c => (
               <button
                 key={c.id}
