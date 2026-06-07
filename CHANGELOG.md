@@ -5,63 +5,37 @@ Todos los cambios notables de este proyecto se documentan aquí.
 ## [Unreleased]
 
 ### Added
-- **Compound Artists filter** (`Artists.jsx`): new "Compound" tab that auto-detects artist names containing separators (`&`, `/`, `feat.`, `+`, `vs.`, `And`, `x`, `×`, `,`). Shows each compound artist with parsed components; if a component exists in the library as a standalone artist, displays `→ Go to artist` link to their detail page; otherwise shows external MB/Discogs/Last.fm search links.
-- **Tri-state compound logic** (`isEffectivelyCompound`): `is_single` overrides auto-detection for band names like "Tiger & Woods" (single artist with `&` in name); `is_compound` manually forces compound for names not caught by regex; auto-detection is the default.
-- **SQLite columns `is_compound` / `is_single`** in `artist_links` table — migrated automatically at startup via `ALTER TABLE ADD COLUMN`.
-- **`PUT /api/artist/{rk}/links/compound`** and **`PUT /api/artist/{rk}/links/single`**: save compound/single-artist flags per artist.
-- **`PUT /api/artists/bulk-compound`**: flag multiple artists as compound in one request.
-- **`PUT /api/artist/{rk}/fix-match-mbid?uuid=`**: apply a MusicBrainz match directly by UUID — searches Plex results by UUID first, then by artist name as fallback.
-- **Manual ID/name entry in all three link modals**: DiscogsLinkModal accepts a raw Discogs artist ID; LastFMLinkModal accepts an exact Last.fm artist name; FixMatchModal accepts a MusicBrainz UUID — all bypass the search results list.
-- **Search box in DiscogsLinkModal**: query is now editable (pre-filled with artist name), triggering a fresh search. Returns up to 10 candidates (was 5).
-- **Current MBID status bar in FixMatchModal**: shows linked UUID with direct MB ↗ link when artist already has an MBID.
-- **`db.set_compound()` / `db.set_single()` / `db.bulk_set_compound()`**: new db.py helpers.
+- **Multi-artist linking for compound artists** (`compound_component_links` SQLite table, `UNIQUE(rating_key, component, service)`): an artist entry that's actually two or more artists (e.g. "Burial + Four Tet") can now be linked component-by-component to Discogs/Last.fm/MusicBrainz, any number of components.
+- **`CompoundLinksSection`**: reusable component-link manager (load/add/remove links via a render-prop search panel), shared by all three service modals.
+- **`GET/PUT/DELETE /api/artist/{rk}/compound-components`**: CRUD for component links.
+- **`GET /api/mb-search?q=`**: direct MusicBrainz artist search, used for compound component linking independently of Plex's match agent.
+- **`DEV_ARTIST_LIMIT` env var**: caps how many artists the scan loads, for faster local development.
+- **Genre Manager** (`/genres`): consolidate genres across the library — view artists per genre, reassign/merge with autocomplete; `GET /api/genres`, `POST /api/genres/reassign`.
+- **AlbumDiscogsModal**: enrich albums from Discogs releases (genres/styles/labels/notes), accessible from `ArtistDetail`.
+- **ArtistDetail page** (`/artists/:ratingKey`): album table with status dots and per-album Fix Match / Discogs actions.
+- **Wikidata + MusicBrainz tabs in EnrichModal**: country of origin via SPARQL; artist type/founding year/country/genres with community votes.
+- **Plex deep-link**: "Plex ↗" button in the artists table, built from `machineIdentifier` (`/api/plex-info`).
 
 ### Changed
-- **`GET /api/artist/{rk}/discogs-search`**: now accepts optional `?q=` param to search with a custom term instead of the Plex artist name.
-- **`No Match` filter**: now also excludes artists that are effectively compound (auto-detected or manually flagged) — no manual action required to clean up collaboration entries.
-- **`/api/artists` and `/api/artist/{rk}/status`**: now return `is_compound` and `is_single` fields.
-- **FixMatchModal**: all text translated to English (was partially Spanish: "Buscar", "Aplicar", "Sin resultados", "O refrescar…").
+- **Compound status is now derived, not stored**: `is_compound` = artist has 2+ unique component names across its `compound_component_links` (any service). The manual single/compound toggle is gone — the system infers it purely from how many component artists you've actually linked.
+- **All three link modals unified**: `DiscogsLinkModal`, `LastFMLinkModal` and `MusicBrainzLinkModal` always render `CompoundLinksSection` — identical UX for single and compound artists; a single artist is simply one component.
+- **Artists table chips unified** (`LinkedChip`): one green chip per service that opens its modal on click (replaces the old mixed external-link + "⋯" edit-button pattern); shows `"N <Service>"` when an artist links to multiple components.
+- **`/api/artists` / `/api/artist/{rk}/status`**: now return `discogs_links` / `lastfm_links` / `mb_links` arrays of `{component, service_id}` plus derived `is_compound`; `discogs_id`/`lastfm_name` are kept as flat convenience fields (first linked component) for simple chip rendering.
+- **`scan_manager.py`**: trimmed to a single `all_artists` step for local development speed (other steps commented out, summary stripped to `totalArtists`).
+- **Genre Manager indexing**: `/api/genres` now iterates ALL genres per artist (not just primary); reassignment reads the full genre list, replaces the target genre and writes the whole list back — avoids corrupting multi-genre artists.
+- **Artists page state**: `search`, `filter`, `page` live in `useSearchParams` — browser back restores the exact position; an active search shows all matching results unpaginated.
+- **Artists page optimistic updates**: after closing a link modal, `/api/artist/:id/status` is fetched and merged into a local `overrides` map instead of refetching the whole artist list.
+- UI strings translated to English across Layout sidebar and ScanGate messages.
 
 ### Fixed
-- **SQLite persistence layer** (`backend/db.py`): stores per-artist service links — `discogs_id` (int) and `lastfm_name` (text) keyed by Plex `ratingKey`. File `artist_links.db` is gitignored. `db.init_db()` called at FastAPI startup.
-- **DiscogsLinkModal**: new component that auto-searches Discogs when opened, shows candidates with thumbnail, and saves the selected `discogs_id` to SQLite. Includes "Remove" option for already-linked artists.
-- **LastFMLinkModal**: new component with pre-filled search input (Plex artist name), searches Last.fm `artist.search` API, shows candidates with listener counts, and saves the canonical `lastfm_name` to SQLite.
-- **`lastfm_client.search_artists()`**: new function using Last.fm `artist.search`, returns name/mbid/url/listeners.
-- **`PUT /api/artist/{rk}/links/discogs`** and **`PUT /api/artist/{rk}/links/lastfm`**: save/clear service links independently in SQLite.
-- **`GET /api/lastfm/search?q=X`**: search Last.fm artists by name.
+- **"Loading artists..." stuck indefinitely**: `/api/artists` had a fallback calling `section.all()` directly, ignoring `DEV_ARTIST_LIMIT` and racing the background scan. Removed the fallback (503 while no scan cache) and added an `allArtistsReady` guard to the frontend query.
+- **Layout shift on load**: the "Scanning library..." message now renders inside `<tbody>` as a row so the table doesn't jump when it disappears.
+- Semgrep SQL-injection warning in `db.py`'s `ALTER TABLE` migration loop — replaced the f-string loop with literal SQL statements.
+- All external `<a target="_blank">` links carry `rel="noopener noreferrer"`.
 
-### Changed
-- **Artists page rewritten**: columns Artist | MusicBrainz | Discogs | Last.fm | Plex. Filters: All / No Match / No MusicBrainz / No Discogs / No Last.fm.
-- **`GET /api/artists`**: now merges fresh SQLite links on every request on top of the Plex scan cache.
-- **`GET /api/artist/{rk}/status`**: now returns `discogs_id` and `lastfm_name` from SQLite for the override-refresh pattern.
-- **UI language**: all frontend text is now in English (labels, filters, buttons, navigation sidebar).
-- **`.gitignore`**: added `*.db`.
+### Removed
+- Regex-based compound-artist auto-detection (`looksCompound`, `parseComponents`, `CompoundComponents`) and the manual `is_compound`/`is_single` flags, columns and toggle — superseded by status derived from `compound_component_links`.
+- `PUT /api/artist/{rk}/links/discogs|lastfm|compound|single`, `PUT /api/artists/bulk-compound`, `AutoMatchModal`, `FixMatchModal` — superseded by `MusicBrainzLinkModal` + `CompoundLinksSection`.
 
-### Added
-- **Genre Manager** (`/genres`): nueva página para consolidar géneros de la librería. Panel izquierdo lista todos los géneros con conteo de artistas (géneros con ≤ 3 artistas se marcan en ámbar como candidatos a fusionar). Panel derecho muestra artistas del género seleccionado con checkboxes. Barra de reasignación con autocompletado de géneros existentes o escritura libre para crear uno nuevo. Permite mover artistas entre géneros o fusionar géneros pequeños en uno mayor.
-- **Backend `GET /api/genres`**: endpoint que lee artistas de Plex, agrupa por género primario y devuelve lista ordenada por conteo con artistas incluidos.
-- **Backend `POST /api/genres/reassign`**: endpoint para reasignar el género primario de una lista de artistas en Plex.
-- **AlbumDiscogsModal**: nuevo componente para enriquecer albums desde Discogs. Flujo: buscar release → seleccionar → ver géneros/styles/labels/notes → aplicar por sección o todo. Accesible desde `ArtistDetail`.
-- **ArtistDetail page** (`/artists/:ratingKey`): vista detalle del artista con tabla de todos sus albums, status dots (match, portada, géneros, moods) y acciones Fix Match + Discogs por album.
-- **Wikidata tab en EnrichModal**: consulta país de origen vía SPARQL y permite aplicarlo a Plex.
-- **MusicBrainz tab en EnrichModal**: muestra tipo de artista, año de fundación, país y géneros con votos desde MB API. Aplica país y/o géneros directamente.
-- **Plex deep-link** en tabla de artistas: botón "Plex ↗" que abre el artista directamente en Plex Web (requiere `machineIdentifier` de `/api/plex-info`).
-- Navegación a `ArtistDetail` al hacer click en el nombre de un artista en la tabla.
-- Filtros adicionales en Artists: `no_styles`, `no_mood`, `no_photo`.
-
-### Changed
-- **MusicBrainz tab — géneros seleccionables**: los chips de géneros ahora son clicables para elegir cuál aplicar (en lugar de aplicar siempre el primero). El primero por votos queda seleccionado por defecto. Cada chip muestra su conteo de votos comunitarios.
-- **Last.fm tab — "Aplicar todo"**: el botón ahora aplica styles + moods + bio + similares. Renombrado de "Aplicar todo (tags → Moods)".
-- **EnrichModal** expandido de 2 tabs (Last.fm + Discogs) a 4 tabs (MusicBrainz · Last.fm · Discogs · Wikidata).
-- **Artists.jsx**: patrón de actualización optimista con `overrides` local. Tras cerrar un modal, se hace fetch de `/api/artist/:id/status` y se mergea con los datos del servidor sin refetchar toda la lista.
-- Discogs tab en EnrichModal ahora solo aplica bio (el perfil del artista en Discogs no tiene géneros/estilos — estos vienen de releases y se manejan por `AlbumDiscogsModal`).
-
-### Changed
-- **Genre Manager — indexación completa de géneros**: `/api/genres` ahora itera TODOS los géneros de cada artista (antes solo el primario). Un artista con ["Electronic","Psytrance"] aparece en ambos géneros. Resultado: de ~19 géneros visibles a la lista completa de la librería.
-- **Genre Manager — reasignación correcta**: `POST /api/genres/reassign` ahora recibe `old_genre` + `new_genre`, lee la lista completa de géneros del artista, reemplaza el género específico y escribe toda la lista de vuelta. Antes solo pisaba `genre[0]` lo que corrompía artistas con múltiples géneros.
-- **Artists page — estado en URL**: `search`, `filter` y `page` ahora viven en `useSearchParams`. El back button del browser restaura la posición exacta al volver de un ArtistDetail.
-- **Artists page — búsqueda sin paginación**: cuando hay texto en el buscador se muestran TODOS los resultados filtrados sin paginar (los datos ya están en memoria); la paginación solo aparece con lista completa.
-
-### Fixed
-- Todos los links externos (`<a target="_blank">`) tienen `rel="noopener noreferrer"` en todos los componentes.
-- Genre Manager: tras mover artistas, el `invalidateQueries` se retrasa 1.2s para dar tiempo a que Plex indexe el cambio antes del refetch.
+### Security
+- `db.py` migrates legacy `artist_links.discogs_id`/`lastfm_name` rows into `compound_component_links` (component name `'Primary'`) on startup, skipping artists that already have component links — no data lost in the schema transition.

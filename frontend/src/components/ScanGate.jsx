@@ -4,11 +4,11 @@ export default function ScanGate({ children, stepKey }) {
   const { status } = useScan()
 
   if (status.status === 'idle') {
-    return <p className="text-plex-muted">Selecciona una librería para iniciar el scan.</p>
+    return <p className="text-plex-muted">Select a library to start scanning.</p>
   }
 
   if (status.status === 'error') {
-    return <p className="text-red-400">Error durante el scan: {status.error}</p>
+    return <p className="text-red-400">Scan error: {status.error}</p>
   }
 
   if (status.status === 'scanning') {
@@ -27,7 +27,7 @@ export default function ScanGate({ children, stepKey }) {
       <div className="flex items-center justify-center h-64">
         <div className="w-72">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-plex-muted">Escaneando librería...</span>
+            <span className="text-sm text-plex-muted">Scanning library...</span>
             <span className="text-sm text-plex-orange font-mono">{done}/{total}</span>
           </div>
           <div className="w-full bg-plex-card rounded-full h-1.5 mb-2">

@@ -25,7 +25,7 @@ function ScanProgress({ steps = [] }) {
   return (
     <div className="p-3 border-b border-plex-border">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-xs text-plex-muted">Escaneando...</span>
+        <span className="text-xs text-plex-muted">Scanning...</span>
         <span className="text-xs text-plex-orange font-mono">{done}/{total}</span>
       </div>
       <div className="w-full bg-plex-dark rounded-full h-1.5 mb-1.5">
@@ -83,13 +83,13 @@ export default function Layout() {
 
         {/* Library selector */}
         <div className="p-3 border-b border-plex-border">
-          <label className="block text-xs text-plex-muted mb-1">Librería</label>
+          <label className="block text-xs text-plex-muted mb-1">Library</label>
           <select
             value={library}
             onChange={handleLibraryChange}
             className="w-full bg-plex-dark border border-plex-border rounded px-2 py-1 text-sm focus:outline-none focus:border-plex-orange"
           >
-            <option value="">Seleccionar...</option>
+            <option value="">Select...</option>
             {libraries.map((lib) => (
               <option key={lib.name} value={lib.name}>
                 {lib.name}
@@ -104,7 +104,7 @@ export default function Layout() {
         {isDone && (
           <div className="p-3 border-b border-plex-border">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-green-400">Scan completado ✓</span>
+              <span className="text-xs text-green-400">Scan complete ✓</span>
               <button
                 onClick={rescan}
                 className="text-xs text-plex-muted hover:text-white underline"
@@ -122,12 +122,12 @@ export default function Layout() {
 
         {isError && (
           <div className="p-3 border-b border-plex-border">
-            <p className="text-xs text-red-400 mb-1">Error en scan</p>
+            <p className="text-xs text-red-400 mb-1">Scan error</p>
             <button
               onClick={rescan}
               className="text-xs text-plex-orange underline"
             >
-              Reintentar
+              Retry
             </button>
           </div>
         )}
@@ -161,7 +161,7 @@ export default function Layout() {
       <main className="flex-1 p-6 overflow-auto">
         {!library ? (
           <div className="flex items-center justify-center h-full">
-            <p className="text-plex-muted text-lg">Selecciona una librería de música para empezar.</p>
+            <p className="text-plex-muted text-lg">Select a music library to get started.</p>
           </div>
         ) : (
           <Outlet context={{ library, status, results: null }} />

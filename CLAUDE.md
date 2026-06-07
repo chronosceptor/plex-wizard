@@ -25,9 +25,9 @@ Variables de entorno en `.env` en la raíz: `PLEX_URL`, `PLEX_TOKEN`, `LASTFM_AP
 ```
 backend/
   main.py              # FastAPI — todos los endpoints
-  db.py                # SQLite persistence — artist_links (discogs_id, lastfm_name)
+  db.py                # SQLite persistence — compound_component_links (source of truth for service links)
   plex_client.py       # Conexión PlexServer
-  scan_manager.py      # Scan en background con caché por paso
+  scan_manager.py      # Scan en background con caché por paso (recortado a all_artists en dev — ver nota abajo)
   mb_client.py         # MusicBrainz API
   lastfm_client.py     # Last.fm API
   discogs_client.py    # Discogs API
@@ -39,12 +39,12 @@ frontend/src/
   hooks/useAuditData.js     # Lee resultados del contexto
   components/
     Layout.jsx              # Sidebar + progreso del scan
-    DiscogsLinkModal.jsx    # Search Discogs candidates → save artist's discogs_id to SQLite
-    LastFMLinkModal.jsx     # Search Last.fm artists → save artist's lastfm_name to SQLite
+    CompoundLinksSection.jsx # Manager de component-links reutilizado por los 3 modales de servicio
+    DiscogsLinkModal.jsx    # Link a Discogs (siempre vía CompoundLinksSection)
+    LastFMLinkModal.jsx     # Link a Last.fm (siempre vía CompoundLinksSection)
+    MusicBrainzLinkModal.jsx # Link a MusicBrainz — Plex agent (single) / MB direct search (compound, vía CompoundLinksSection)
     EnrichModal.jsx         # 4 tabs: MusicBrainz · Last.fm · Discogs · Wikidata
     AlbumDiscogsModal.jsx   # Enrich album desde Discogs (géneros/styles/labels/bio)
-    AutoMatchModal.jsx      # Auto-match artista con MB (compara discografías)
-    FixMatchModal.jsx        # Fix match manual (artistas y albums)
     MBDataModal.jsx         # Vista datos MB para artistas con MBID
   pages/
     Artists.jsx             # Tabla de artistas con filtros + acciones modales
@@ -52,63 +52,55 @@ frontend/src/
     GenreManager.jsx        # Gestión de géneros: ver/reasignar artistas entre géneros
 ```
 
-## Service Links (SQLite)
+## Dev speed: scan recortado + DEV_ARTIST_LIMIT
 
-- `artist_links.db` stores `discogs_id`, `lastfm_name`, `is_compound`, `is_single` per `ratingKey` — file is gitignored.
-- MusicBrainz → stored in Plex guids (`mbid://uuid`). Discogs/Last.fm → stored in SQLite only.
-- `set_discogs()`, `set_lastfm()`, `set_compound()`, `set_single()` are all independent — updating one never overwrites other fields.
-- `/api/artists` always merges fresh SQLite links on top of Plex scan cache. Don't cache the merged result.
-- `/api/artist/{rk}/status` returns all SQLite fields so the `refreshArtist` override pattern picks them up immediately after modal close.
-- `db.init_db()` called at FastAPI startup — creates table + runs `ALTER TABLE ADD COLUMN` migrations for new columns, safe to call every time.
-- New endpoints: `PUT /api/artist/{rk}/links/compound`, `PUT /api/artist/{rk}/links/single`, `PUT /api/artists/bulk-compound`, `PUT /api/artist/{rk}/fix-match-mbid`.
+Para iterar rápido en la pestaña Artists (sin esperar el scan completo de ~15-20 min):
+- `scan_manager.py`: `STEPS` solo incluye `all_artists` — el resto de pasos están comentados. El summary devuelto por el scan se reduce a `{"totalArtists": N}`.
+- `DEV_ARTIST_LIMIT` (env var, root `.env`): si > 0, `audits/all_artists.py` recorta `section.all()[:DEV_ARTIST_LIMIT]` antes de procesar. **Restaurar a 0 (o quitar la var) y descomentar los pasos del scan antes de producción/release.**
+- `/api/artists` ya NO tiene fallback a `section.all()` directo — devuelve 503 si el scan cache no está listo. El frontend espera con `allArtistsReady` (gate sobre el step `all_artists`).
+
+## Service Links (SQLite) — `compound_component_links` es la fuente de verdad
+
+- Tabla `compound_component_links`: `id, rating_key, component, service, service_id, updated_at`, `UNIQUE(rating_key, component, service)`. `service ∈ {discogs, lastfm, musicbrainz}`.
+- **Todo artista — single o compound — se linkea igual**: una fila por componente. Un artista "single" simplemente tiene 1 componente (su propio nombre); uno "compound" tiene 2+.
+- MusicBrainz para artistas single sigue almacenándose en el guid de Plex (`mbid://uuid`, vía `artist.matches()` + `fix-match`); para componentes de artistas compuestos se guarda en `compound_component_links` (no se puede aplicar a Plex porque el artista compuesto no existe como entidad en MB).
+- `db.get_all_component_links_grouped()`: `{rating_key: {discogs: [...], lastfm: [...], musicbrainz: [...]}}`, usado por `/api/artists`.
+- `db.get_compound_components(rk)` / `set_compound_component()` / `delete_compound_component()`: CRUD por artista.
+- `db.init_db()` migra automáticamente al startup: filas legacy con `artist_links.discogs_id`/`lastfm_name` se copian a `compound_component_links` con `component='Primary'` (solo si el artista no tiene ya component links — evita duplicar).
+- `/api/artists` y `/api/artist/{rk}/status` devuelven `discogs_links`/`lastfm_links`/`mb_links` (arrays de `{component, service_id}`) + `is_compound` derivado + `discogs_id`/`lastfm_name` planos (primer componente, para chips simples).
+- `/api/artists` siempre mergea fresh links sobre el scan cache de Plex — no cachear el merge.
+- Endpoints: `GET/PUT/DELETE /api/artist/{rk}/compound-components`, `GET /api/mb-search?q=`.
 
 ## Artists page (current)
 
 Filters: All / No Match / No MusicBrainz / No Discogs / No Last.fm / **Compound**
 Columns: Artist | MusicBrainz | Discogs | Last.fm | Plex
-"No Match" = none of the three services linked AND not effectively compound (`!isEffectivelyCompound(a)`).
+"No Match" = `!isMatched && discogs_links.length === 0 && lastfm_links.length === 0 && !is_compound`.
 
-## Compound Artists
+## Compound Artists — derivado, no almacenado
 
-Compound = artist entry in Plex that is actually two or more artists (e.g. "Burial + Four Tet", "Tom Misch & Yussef Dayes").
-
-### Detection
-`looksCompound(title)` splits by: ` And `, ` & `, ` / `, ` x `, ` × `, ` feat. `, ` featuring `, ` + `, ` vs. `, ` , `
-
-### Tri-state logic (`isEffectivelyCompound`)
-```js
-function isEffectivelyCompound(a) {
-  if (a.is_single)   return false   // user override: "this IS a single artist despite the name"
-  if (a.is_compound) return true    // user manually flagged as compound
-  return looksCompound(a.title)     // auto-detected by regex
-}
+**No existe flag manual ni toggle.** `is_compound` se deriva en el backend:
+```python
+all_components = {lnk["component"] for lnk in discogs_links + lastfm_links + mb_links}
+is_compound = len(all_components) > 1
 ```
-- `is_single = true` → use case: "Tiger & Woods" is a duo/band name, not two separate artists
-- `is_compound = true` → use case: manually flag an artist not caught by regex
-- Auto-detected artists: `no_match` filter excludes them automatically, no manual action needed
+Es decir: un artista es compound si tiene **2+ nombres de componente distintos** linkeados (en cualquier servicio). Si solo has linkeado 1 componente (o ninguno), es single. Esto elimina por completo el regex de auto-detección (`looksCompound`/`parseComponents`/`CompoundComponents`) y los flags `is_compound`/`is_single` — toda esa lógica fue removida.
 
-### Component breakdown (Compound filter only)
-`CompoundComponents` parses each component and checks if it exists in the artists array (case-insensitive title match):
-- **Found in library** → shows `→ Go to artist` (Link to `/artists/{ratingKey}`) so user can map services on the individual artist's page
-- **Not found** → shows external search links (MB ↗ / Discogs ↗ / Last.fm ↗)
+**Flujo de uso**: el usuario abre cualquier modal de servicio → ve la lista de componentes ya linkeados → agrega componentes con "+ Add" (nombre libre) → busca/linkea cada uno por separado. Linkear 1 componente = single; 2+ = compound automáticamente.
 
-### Badges in Artist column
-- `⋱ auto` (amber) — auto-detected; clicking marks `is_single = true`
-- `✓ single` (blue) — `is_single` override active; clicking removes it
-- `⋱` (grey) — not detected; clicking sets `is_compound = true`
-- `⋱ manual` (amber) — manually flagged; clicking removes flag
+## Arquitectura de modales — unificados
 
-## Arquitectura de modales
+`DiscogsLinkModal`, `LastFMLinkModal` y `MusicBrainzLinkModal` (para artistas compuestos) **siempre** renderizan `CompoundLinksSection` — ya no hay distinción single/compound en la UI del modal:
 
-### Patrón homologado: DiscogsLinkModal / LastFMLinkModal / FixMatchModal
-Los tres modales de linking siguen la misma estructura:
-1. **Current link status bar** (verde) con botón Remove — si ya hay un link activo
-2. **Search box** con botón Search — pre-relleno con el nombre del artista
-3. **Manual entry field** — Discogs: número de ID; Last.fm: nombre exacto; MusicBrainz: UUID
-4. **Results list** — candidatos clicables
+1. Lista de componentes ya linkeados (chip verde, ID/nombre clicable → external link, botón "Remove" en verde neutro)
+2. Form "+ Add component artist name..." (pre-rellenado con `artist.title` vía prop `defaultComponent`)
+3. Al activar un componente, se abre el panel de búsqueda específico del servicio (`renderSearch` render-prop)
 
-El search de Discogs acepta query param `?q=` para búsquedas personalizadas.  
-El fix-match-mbid endpoint busca el UUID en resultados de Plex (primero por UUID como query, luego por nombre del artista).
+**Excepción — MusicBrainz para artistas single**: usa `PlexSearchPanel` (busca via `/api/artist/{rk}/matches`, agente de Plex) y aplica con `fix-match`/`fix-match-mbid` — esto SÍ escribe el guid en Plex. Solo cuando `artist.is_compound` es true se usa `MBDirectSearchPanel` + `CompoundLinksSection` (búsqueda directa a MB API, guarda solo en SQLite, sin tocar Plex).
+
+**Tabla — chip unificado `LinkedChip`**: un solo chip verde por servicio, click abre el modal (ya no hay link externo directo + botón "⋯" separado). Si hay 2+ componentes linkeados muestra `"N <Service>"` (p.ej. "2 Discogs"); si hay 1, solo el nombre del servicio. La navegación externa vive dentro del modal (`CompoundLinksSection` linkea el `service_id` a la página externa correspondiente vía `serviceUrl(service, id)`).
+
+El search de Discogs acepta query param `?q=` para búsquedas personalizadas.
 
 ### EnrichModal (artistas)
 4 tabs independientes, cada uno gestiona su propio `useQuery`/`useMutation`:

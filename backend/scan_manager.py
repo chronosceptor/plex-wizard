@@ -3,23 +3,24 @@ from datetime import datetime, timezone
 
 from plex_client import get_plex
 from audits.all_artists import all_artists
-from audits.albums import albums_no_artwork
-from audits.artists import artists_no_genre, artists_no_photo
-from audits.artists_country import artists_no_country
-from audits.tracks import tracks_incomplete
-from audits.listening_stats import listening_stats
-from audits.unmatched import artists_no_match, albums_no_match
+# FASE ARTISTS: solo cargamos el paso necesario para la pestaña Artists
+# from audits.albums import albums_no_artwork
+# from audits.artists import artists_no_genre, artists_no_photo
+# from audits.artists_country import artists_no_country
+# from audits.tracks import tracks_incomplete
+# from audits.listening_stats import listening_stats
+# from audits.unmatched import artists_no_match, albums_no_match
 
 STEPS = [
     ("all_artists",         "Vista de artistas",             all_artists),
-    ("albums_no_artwork",   "Albums sin portada",            albums_no_artwork),
-    ("artists_no_genre",    "Artistas sin género",           artists_no_genre),
-    ("artists_no_photo",    "Artistas sin foto / bio",       artists_no_photo),
-    ("artists_no_country",  "Artistas sin país",             artists_no_country),
-    ("listening_stats",     "Stats de escucha",              listening_stats),
-    ("artists_no_match",    "Artistas sin match",            artists_no_match),
-    ("albums_no_match",     "Albums sin match",              albums_no_match),
-    ("tracks_incomplete",   "Tracks con metadata incompleta", tracks_incomplete),
+    # ("albums_no_artwork",   "Albums sin portada",            albums_no_artwork),
+    # ("artists_no_genre",    "Artistas sin género",           artists_no_genre),
+    # ("artists_no_photo",    "Artistas sin foto / bio",       artists_no_photo),
+    # ("artists_no_country",  "Artistas sin país",             artists_no_country),
+    # ("listening_stats",     "Stats de escucha",              listening_stats),
+    # ("artists_no_match",    "Artistas sin match",            artists_no_match),
+    # ("albums_no_match",     "Albums sin match",              albums_no_match),
+    # ("tracks_incomplete",   "Tracks con metadata incompleta", tracks_incomplete),
 ]
 
 # { library_name -> scan state dict }
@@ -105,15 +106,7 @@ def _run(library: str):
                 "results": results,
                 "scannedAt": datetime.now(timezone.utc).isoformat(),
                 "summary": {
-                    "totalArtists":       len(results["all_artists"]),
-                    "albumsNoArtwork":    len(results["albums_no_artwork"]),
-                    "artistsNoGenre":     len(results["artists_no_genre"]),
-                    "artistsNoPhoto":     len(results["artists_no_photo"]),
-                    "artistsNoCountry":   len(results["artists_no_country"]),
-                    "artistsNoMatch":     len(results["artists_no_match"]),
-                    "albumsNoMatch":      len(results["albums_no_match"]),
-                    "tracksIncomplete":   len(results["tracks_incomplete"]),
-                    "artistsNeverPlayed": results["listening_stats"]["summary"]["neverPlayedCount"],
+                    "totalArtists": len(results["all_artists"]),
                 },
             }
     except Exception as e:

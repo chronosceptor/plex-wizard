@@ -1,11 +1,17 @@
+import os
 from plexapi.server import PlexServer
+
+_DEV_LIMIT = int(os.getenv("DEV_ARTIST_LIMIT", "0"))
 
 
 def all_artists(plex: PlexServer, library_name: str) -> list[dict]:
     """Collect full artist list with metadata status for the unified Artists view."""
     section = plex.library.section(library_name)
+    artists = section.all()
+    if _DEV_LIMIT > 0:
+        artists = artists[:_DEV_LIMIT]
     result = []
-    for a in section.all():
+    for a in artists:
         guid = getattr(a, "guid", "") or ""
         secondary = [g.id for g in getattr(a, "guids", [])]
         mbid = None

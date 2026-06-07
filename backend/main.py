@@ -4,6 +4,8 @@ from pydantic import BaseModel
 
 import os
 import re
+
+_DEV_ARTIST_LIMIT = int(os.getenv("DEV_ARTIST_LIMIT", "0"))
 import random
 import requests as _requests
 from requests.exceptions import RequestException, Timeout as RequestTimeout
@@ -46,6 +48,11 @@ def _merge_tags(existing: list[str], new: list[str], limit: int = 12) -> list[st
     return list(seen.values())[:limit]
 
 
+def _safe_int(s) -> int | None:
+    try: return int(s)
+    except (ValueError, TypeError): return None
+
+
 def _safe_mbid(raw: str) -> str:
     """Validate and return the UUID portion of an mbid:// string.
     Raises HTTPException 400 if the format is invalid, preventing SSRF."""
@@ -72,62 +79,30 @@ app.add_middleware(
 
 @app.get("/api/artists")
 def list_all_artists(library: str = Query(...)):
-    """Return all artists merged with SQLite service links.
-    Uses the scan cache for Plex data when available; SQLite links are always fresh.
-    """
-    cached = get_step_result(library, "all_artists")
-    if cached is not None:
-        plex_artists = cached
-    else:
-        plex = get_plex()
-        try:
-            section = plex.library.section(library)
-            plex_artists = []
-            for a in section.all():
-                guid = getattr(a, "guid", "") or ""
-                secondary = [g.id for g in getattr(a, "guids", [])]
-                mbid = None
-                if guid.startswith("mbid://"):
-                    mbid = guid.replace("mbid://", "")
-                else:
-                    for g in secondary:
-                        if g.startswith("mbid://"):
-                            mbid = g.replace("mbid://", "")
-                            break
-                genres    = [g.tag for g in (a.genres  or [])]
-                styles    = [s.tag for s in (getattr(a, "styles", None) or [])]
-                moods     = [m.tag for m in (a.moods   or [])]
-                countries = [c.tag for c in (a.countries or [])]
-                plex_artists.append({
-                    "ratingKey":  a.ratingKey,
-                    "title":      a.title,
-                    "thumb":      bool(a.thumb),
-                    "guid":       guid,
-                    "mbid":       mbid,
-                    "isMatched":  mbid is not None,
-                    "genres":     genres,
-                    "styles":     styles,
-                    "moods":      moods,
-                    "country":    countries[0] if countries else None,
-                    "hasBio":     bool((a.summary or "").strip()),
-                    "albumCount": getattr(a, "childCount", None) or getattr(a, "albumCount", 0) or 0,
-                    "viewCount":  getattr(a, "viewCount", 0) or 0,
-                })
-            plex_artists.sort(key=lambda x: x["title"].lower())
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+    """Return all artists merged with compound_component_links. Requires scan cache."""
+    plex_artists = get_step_result(library, "all_artists")
+    if plex_artists is None:
+        raise HTTPException(status_code=503, detail="Scan not ready")
 
-    all_links = db.get_all_links()
-    return [
-        {
+    all_links = db.get_all_component_links_grouped()
+    result = []
+    for a in plex_artists:
+        rk = a["ratingKey"]
+        links = all_links.get(rk, {"discogs": [], "lastfm": [], "musicbrainz": []})
+        discogs_links = links["discogs"]
+        lastfm_links  = links["lastfm"]
+        mb_links      = links["musicbrainz"]
+        all_components = {lnk["component"] for lnk in discogs_links + lastfm_links + mb_links}
+        result.append({
             **a,
-            "discogs_id":  all_links.get(a["ratingKey"], {}).get("discogs_id"),
-            "lastfm_name": all_links.get(a["ratingKey"], {}).get("lastfm_name"),
-            "is_compound": all_links.get(a["ratingKey"], {}).get("is_compound", False),
-            "is_single":   all_links.get(a["ratingKey"], {}).get("is_single", False),
-        }
-        for a in plex_artists
-    ]
+            "discogs_links": discogs_links,
+            "lastfm_links":  lastfm_links,
+            "mb_links":      mb_links,
+            "is_compound":   len(all_components) > 1,
+            "discogs_id":    _safe_int(discogs_links[0]["service_id"]) if discogs_links else None,
+            "lastfm_name":   lastfm_links[0]["service_id"] if lastfm_links else None,
+        })
+    return result
 
 
 @app.get("/api/plex-info")
@@ -156,22 +131,28 @@ def artist_status(rating_key: int):
                 if g.startswith("mbid://"):
                     mbid = g.replace("mbid://", "")
                     break
-        links = db.get_links(rating_key)
+        components   = db.get_compound_components(rating_key)
+        discogs_links = [c for c in components if c["service"] == "discogs"]
+        lastfm_links  = [c for c in components if c["service"] == "lastfm"]
+        mb_links      = [c for c in components if c["service"] == "musicbrainz"]
+        all_components = {c["component"] for c in components}
         return {
-            "ratingKey":   a.ratingKey,
-            "thumb":       bool(a.thumb),
-            "guid":        guid,
-            "mbid":        mbid,
-            "isMatched":   mbid is not None,
-            "genres":      [g.tag for g in (a.genres or [])],
-            "styles":      [s.tag for s in (getattr(a, "styles", None) or [])],
-            "moods":       [m.tag for m in (a.moods or [])],
-            "country":     ([c.tag for c in (a.countries or [])] + [None])[0],
-            "hasBio":      bool((a.summary or "").strip()),
-            "discogs_id":  links["discogs_id"],
-            "lastfm_name": links["lastfm_name"],
-            "is_compound": links["is_compound"],
-            "is_single":   links["is_single"],
+            "ratingKey":    a.ratingKey,
+            "thumb":        bool(a.thumb),
+            "guid":         guid,
+            "mbid":         mbid,
+            "isMatched":    mbid is not None,
+            "genres":       [g.tag for g in (a.genres or [])],
+            "styles":       [s.tag for s in (getattr(a, "styles", None) or [])],
+            "moods":        [m.tag for m in (a.moods or [])],
+            "country":      ([c.tag for c in (a.countries or [])] + [None])[0],
+            "hasBio":       bool((a.summary or "").strip()),
+            "discogs_links": discogs_links,
+            "lastfm_links":  lastfm_links,
+            "mb_links":      mb_links,
+            "is_compound":   len(all_components) > 1,
+            "discogs_id":    _safe_int(discogs_links[0]["service_id"]) if discogs_links else None,
+            "lastfm_name":   lastfm_links[0]["service_id"] if lastfm_links else None,
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -246,59 +227,41 @@ def list_libraries():
 
 
 # ---------------------------------------------------------------------------
-# Service link endpoints (SQLite)
+# Component link endpoints (SQLite) — compound_component_links is the source of truth
 # ---------------------------------------------------------------------------
 
-class DiscogsLinkPayload(BaseModel):
-    discogs_id: int | None
+@app.get("/api/artist/{rating_key}/compound-components")
+def get_compound_components(rating_key: int):
+    return db.get_compound_components(rating_key)
 
 
-class LastFMLinkPayload(BaseModel):
-    lastfm_name: str | None
+class CompoundComponentPayload(BaseModel):
+    component: str
+    service: str    # 'discogs' | 'lastfm' | 'musicbrainz'
+    service_id: str
 
 
-@app.put("/api/artist/{rating_key}/links/discogs")
-def set_discogs_link(rating_key: int, payload: DiscogsLinkPayload):
-    db.set_discogs(rating_key, payload.discogs_id)
-    return {"success": True, "discogs_id": payload.discogs_id}
+@app.put("/api/artist/{rating_key}/compound-components")
+def set_compound_component(rating_key: int, payload: CompoundComponentPayload):
+    if payload.service not in ("discogs", "lastfm", "musicbrainz"):
+        raise HTTPException(status_code=400, detail="service must be discogs, lastfm, or musicbrainz")
+    db.set_compound_component(rating_key, payload.component, payload.service, payload.service_id)
+    return {"success": True}
 
 
-@app.put("/api/artist/{rating_key}/links/lastfm")
-def set_lastfm_link(rating_key: int, payload: LastFMLinkPayload):
-    name = payload.lastfm_name.strip() if payload.lastfm_name else None
-    db.set_lastfm(rating_key, name)
-    return {"success": True, "lastfm_name": name}
+@app.delete("/api/artist/{rating_key}/compound-components")
+def delete_compound_component(rating_key: int, component: str = Query(...), service: str = Query(...)):
+    db.delete_compound_component(rating_key, component, service)
+    return {"success": True}
 
 
-class CompoundPayload(BaseModel):
-    is_compound: bool
-
-
-@app.put("/api/artist/{rating_key}/links/compound")
-def set_compound_link(rating_key: int, payload: CompoundPayload):
-    db.set_compound(rating_key, payload.is_compound)
-    return {"success": True, "is_compound": payload.is_compound}
-
-
-class SinglePayload(BaseModel):
-    is_single: bool
-
-
-@app.put("/api/artist/{rating_key}/links/single")
-def set_single_link(rating_key: int, payload: SinglePayload):
-    db.set_single(rating_key, payload.is_single)
-    return {"success": True, "is_single": payload.is_single}
-
-
-class BulkCompoundPayload(BaseModel):
-    rating_keys: list[int]
-    is_compound: bool = True
-
-
-@app.put("/api/artists/bulk-compound")
-def bulk_compound_link(payload: BulkCompoundPayload):
-    db.bulk_set_compound(payload.rating_keys, payload.is_compound)
-    return {"success": True, "count": len(payload.rating_keys)}
+@app.get("/api/mb-search")
+def mb_search(q: str = Query(...)):
+    try:
+        results = mb_search_artists(q, limit=10)
+        return {"results": results}
+    except Exception as e:
+        _raise_for_external(e)
 
 
 @app.get("/api/lastfm/search")
