@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useScan } from '../context/ScanContext'
 import MusicBrainzLinkModal from '../components/MusicBrainzLinkModal'
 import DiscogsLinkModal from '../components/DiscogsLinkModal'
@@ -42,6 +42,7 @@ function LinkBtn({ onClick }) {
 
 export default function Artists() {
   const { library, status } = useScan()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const search = searchParams.get('q') ?? ''
@@ -231,7 +232,12 @@ export default function Artists() {
                   >
                     {/* Artist */}
                     <td className="px-4 py-2.5">
-                      <p className="text-sm font-medium truncate max-w-xs">{a.title}</p>
+                      <button
+                        onClick={() => navigate(`/artists/${a.ratingKey}`)}
+                        className="text-sm font-medium truncate max-w-xs text-left hover:text-plex-orange hover:underline transition-colors"
+                      >
+                        {a.title}
+                      </button>
                       {a.albumCount > 0 && (
                         <p className="text-xs text-plex-muted">
                           {a.albumCount} album{a.albumCount !== 1 ? 's' : ''}

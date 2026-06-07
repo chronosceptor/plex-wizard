@@ -11,7 +11,12 @@ import requests as _requests
 from requests.exceptions import RequestException, Timeout as RequestTimeout
 from plex_client import get_plex
 from scan_manager import start_scan, get_status, get_results, get_step_result
-from mb_client import get_artist as mb_get_artist, search_artists as mb_search_artists, get_artist_releases as mb_get_releases
+from mb_client import (
+    get_artist as mb_get_artist,
+    search_artists as mb_search_artists,
+    get_artist_releases as mb_get_releases,
+    get_artist_url_relations as mb_get_url_relations,
+)
 from lastfm_client import get_artist as lfm_get_artist, search_artists as lfm_search_artists
 import db as db
 from discogs_client import (
@@ -452,6 +457,26 @@ def artist_mb_data(rating_key: int):
         if not mbid:
             raise HTTPException(status_code=400, detail="Este artista no tiene MBID. Usa Fix Match primero.")
         return mb_get_artist(mbid)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/artist/{rating_key}/mb-suggested-links")
+def artist_mb_suggested_links(rating_key: int):
+    """Suggest Discogs ID / Last.fm name from MusicBrainz's outbound url-rels.
+    These come from MB's community-curated cross-links — high-confidence candidates
+    for auto-linking Discogs/Last.fm without a manual search. Returns nulls when
+    the artist has no MBID or MB has no matching relations.
+    """
+    plex = get_plex()
+    try:
+        artist = plex.fetchItem(rating_key)
+        mbid = _extract_mbid(artist)
+        if not mbid:
+            return {"discogs_id": None, "lastfm_name": None}
+        return mb_get_url_relations(mbid)
     except HTTPException:
         raise
     except Exception as e:

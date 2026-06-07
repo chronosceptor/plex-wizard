@@ -43,12 +43,12 @@ frontend/src/
     DiscogsLinkModal.jsx    # Link a Discogs (siempre vía CompoundLinksSection)
     LastFMLinkModal.jsx     # Link a Last.fm (siempre vía CompoundLinksSection)
     MusicBrainzLinkModal.jsx # Link a MusicBrainz — Plex agent (single) / MB direct search (compound, vía CompoundLinksSection)
-    EnrichModal.jsx         # 4 tabs: MusicBrainz · Last.fm · Discogs · Wikidata
+    ArtistEnrichSections.jsx # Secciones apiladas de enrich (MB · Last.fm · Discogs · Wikidata) — embebidas en ArtistDetail
     AlbumDiscogsModal.jsx   # Enrich album desde Discogs (géneros/styles/labels/bio)
     MBDataModal.jsx         # Vista datos MB para artistas con MBID
   pages/
-    Artists.jsx             # Tabla de artistas con filtros + acciones modales
-    ArtistDetail.jsx        # Detalle artista + tabla de albums con status dots
+    Artists.jsx             # Tabla de artistas con filtros + acciones modales — nombre clicable → /artists/:id
+    ArtistDetail.jsx        # Página de artista: header + ArtistEnrichSections (enrich in-page) + tabla de albums
     GenreManager.jsx        # Gestión de géneros: ver/reasignar artistas entre géneros
 ```
 
@@ -102,12 +102,35 @@ Es decir: un artista es compound si tiene **2+ nombres de componente distintos**
 
 El search de Discogs acepta query param `?q=` para búsquedas personalizadas.
 
-### EnrichModal (artistas)
-4 tabs independientes, cada uno gestiona su propio `useQuery`/`useMutation`:
+### ArtistEnrichSections (artistas) — embebido en ArtistDetail, no modal
+El enrich de artistas vive **dentro de la página del artista** (`ArtistDetail`), como secciones apiladas
+(todas visibles, sin tabs ni accordion) — `EnrichModal` fue eliminado (estaba huérfano, ya migrado).
+4 secciones independientes, cada una gestiona su propio `useQuery`/`useMutation` (`MusicBrainzSection`,
+`LastFMSection`, `DiscogsSection`, `WikidataSection`), compartiendo helpers `TagChip`/`ApplyBtn`/`SourceSection`:
 - **MusicBrainz**: país + géneros con votos, requiere MBID
 - **Last.fm**: tags (aplicables como géneros/styles/moods), bio, artistas similares
 - **Discogs**: búsqueda de artista → bio del perfil. Géneros/estilos NO se aplican desde aquí (vienen de releases, no del artista en Discogs)
 - **Wikidata**: país de origen vía SPARQL
+
+`onApplied` invalida `['artist-albums', ratingKey]` para refrescar la página tras aplicar cualquier cambio.
+
+## Sugerencias automáticas MusicBrainz → Discogs/Last.fm (`url-rels`)
+
+MusicBrainz expone relaciones de URL salientes (`inc=url-rels`) curadas por la comunidad — links directos
+del artista en MB hacia su página en Discogs/Last.fm/Wikidata/sitio oficial. Esto permite **pre-rellenar
+candidatos de alta confianza** sin que el usuario tenga que buscar manualmente:
+
+- `mb_client.get_artist_url_relations(mbid)` + `_parse_url_relations()`: parsean las relaciones tipo
+  `discogs`/`last.fm`, extraen `discogs_id` (regex `^/artist/(\d+)`) y `lastfm_name` (path decodeado de
+  `/music/<name>`). Devuelven `{"discogs_id": str|None, "lastfm_name": str|None}`.
+- Endpoint `GET /api/artist/{rk}/mb-suggested-links`: usa `_extract_mbid` (mismo helper que `mb-data`,
+  revisa `guid` y `guids` secundarios) — si no hay MBID devuelve `{discogs_id: null, lastfm_name: null}`.
+- Frontend: componente `MBSuggestion` (duplicado en `DiscogsLinkModal`/`LastFMLinkModal`, mismo patrón)
+  renderiza una card naranja "Suggested by MusicBrainz" con link externo + botón "Use this" que llama
+  directamente a `onLink(...)` — el mismo flujo de `CompoundLinksSection.addLink`, persiste en
+  `compound_component_links`. Se oculta si no hay sugerencia (`data?.discogs_id`/`data?.lastfm_name` null).
+- Validado con datos reales: para "1200 Micrograms" MB sugirió `discogs_id: "28118"` — coincide
+  exactamente con el candidato top de la búsqueda manual de Discogs, confirmando alta confianza.
 
 ### AlbumDiscogsModal (albums)
 Flujo: buscar album → seleccionar release → ver géneros/styles/labels/notes → aplicar por sección o todo.
@@ -136,7 +159,7 @@ const refreshArtist = useCallback(async (ratingKey) => {
 - **Artista en Discogs** → solo tiene `profile` (bio). Géneros/estilos NO disponibles.
 - **Release en Discogs** → tiene `genres`, `styles`, `labels`, `notes`. Se aplican a nivel de album.
 
-Esta distinción es importante: el tab Discogs de `EnrichModal` solo aplica bio; `AlbumDiscogsModal` aplica géneros/styles/labels.
+Esta distinción es importante: la sección Discogs de `ArtistEnrichSections` solo aplica bio; `AlbumDiscogsModal` aplica géneros/styles/labels.
 
 ## Links externos
 

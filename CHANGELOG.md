@@ -15,6 +15,10 @@ Todos los cambios notables de este proyecto se documentan aquí.
 - **ArtistDetail page** (`/artists/:ratingKey`): album table with status dots and per-album Fix Match / Discogs actions.
 - **Wikidata + MusicBrainz tabs in EnrichModal**: country of origin via SPARQL; artist type/founding year/country/genres with community votes.
 - **Plex deep-link**: "Plex ↗" button in the artists table, built from `machineIdentifier` (`/api/plex-info`).
+- **`ArtistEnrichSections`**: artist enrichment now lives in-page on `ArtistDetail` as stacked sections (MusicBrainz · Last.fm · Discogs · Wikidata) instead of a modal — migrated from the now-removed `EnrichModal`.
+- **Clickable artist names**: clicking an artist's name in the Artists table now navigates to `/artists/:ratingKey`.
+- **MusicBrainz → Discogs/Last.fm auto-suggestion**: `mb_client.get_artist_url_relations()` parses MusicBrainz's outbound `url-rels` (`inc=url-rels`) to extract a high-confidence Discogs ID / Last.fm artist name from the community-curated cross-links. New `GET /api/artist/{rk}/mb-suggested-links` endpoint; `DiscogsLinkModal`/`LastFMLinkModal` show an orange "Suggested by MusicBrainz" card with a one-click "Use this" button when a candidate is found.
+- **PlexAPI/MusicBrainz/Discogs/Last.fm enrichment exploration docs** (`docs/`): research notes on what each API can provide for enrichment, used to scope the artist-page rework and the MB auto-suggestion feature.
 
 ### Changed
 - **Compound status is now derived, not stored**: `is_compound` = artist has 2+ unique component names across its `compound_component_links` (any service). The manual single/compound toggle is gone — the system infers it purely from how many component artists you've actually linked.
@@ -36,6 +40,7 @@ Todos los cambios notables de este proyecto se documentan aquí.
 ### Removed
 - Regex-based compound-artist auto-detection (`looksCompound`, `parseComponents`, `CompoundComponents`) and the manual `is_compound`/`is_single` flags, columns and toggle — superseded by status derived from `compound_component_links`.
 - `PUT /api/artist/{rk}/links/discogs|lastfm|compound|single`, `PUT /api/artists/bulk-compound`, `AutoMatchModal`, `FixMatchModal` — superseded by `MusicBrainzLinkModal` + `CompoundLinksSection`.
+- `EnrichModal` — was orphaned (never imported), its 4 tabs were migrated into `ArtistEnrichSections` as in-page stacked sections on `ArtistDetail`.
 
 ### Security
 - `db.py` migrates legacy `artist_links.discogs_id`/`lastfm_name` rows into `compound_component_links` (component name `'Primary'`) on startup, skipping artists that already have component links — no data lost in the schema transition.

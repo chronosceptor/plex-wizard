@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import FixMatchModal from '../components/FixMatchModal'
 import AlbumDiscogsModal from '../components/AlbumDiscogsModal'
+import ArtistEnrichSections from '../components/ArtistEnrichSections'
 
 function Dot({ ok, title, count }) {
   return (
@@ -39,6 +40,11 @@ export default function ArtistDetail() {
   function handleAlbumAction() {
     setFixItem(null)
     setDiscogsItem(null)
+    queryClient.invalidateQueries({ queryKey: ['artist-albums', ratingKey] })
+  }
+
+  // After applying enrichment data, refetch to show updated header status
+  function handleEnrichApplied() {
     queryClient.invalidateQueries({ queryKey: ['artist-albums', ratingKey] })
   }
 
@@ -88,6 +94,9 @@ export default function ArtistDetail() {
               </div>
             </div>
           </div>
+
+          {/* Enrich sections — MusicBrainz / Last.fm / Discogs / Wikidata */}
+          <ArtistEnrichSections artist={data} onApplied={handleEnrichApplied} />
 
           {/* Albums data table */}
           <div>

@@ -4,6 +4,41 @@ import CompoundLinksSection from './CompoundLinksSection'
 
 const BTN = 'px-4 py-2 bg-plex-dark border border-plex-border hover:border-plex-orange text-white text-sm rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap'
 
+function MBSuggestion({ ratingKey, onLink }) {
+  const { data } = useQuery({
+    queryKey: ['mb-suggested-links', ratingKey],
+    queryFn: async () => {
+      const res = await fetch(`/api/artist/${ratingKey}/mb-suggested-links`)
+      if (!res.ok) return { discogs_id: null, lastfm_name: null }
+      return res.json()
+    },
+    staleTime: 5 * 60 * 1000,
+  })
+
+  if (!data?.discogs_id) return null
+
+  return (
+    <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-plex-orange/40 bg-plex-orange/10">
+      <div className="min-w-0">
+        <p className="text-xs text-plex-orange mb-0.5">Suggested by MusicBrainz</p>
+        <a
+          href={`https://www.discogs.com/artist/${data.discogs_id}`}
+          target="_blank" rel="noopener noreferrer"
+          className="text-sm font-medium text-white hover:underline"
+        >
+          Discogs ID: {data.discogs_id} ↗
+        </a>
+      </div>
+      <button
+        onClick={() => onLink(data.discogs_id)}
+        className="flex-shrink-0 px-3 py-1.5 rounded text-xs font-semibold bg-plex-orange text-plex-dark hover:opacity-90 transition-colors"
+      >
+        Use this
+      </button>
+    </div>
+  )
+}
+
 function DiscogsSearchPanel({ ratingKey, initialQuery, onLink }) {
   const [searchQuery, setSearchQuery] = useState(initialQuery)
   const [activeQuery, setActiveQuery] = useState(initialQuery)
@@ -33,6 +68,8 @@ function DiscogsSearchPanel({ ratingKey, initialQuery, onLink }) {
 
   return (
     <div className="space-y-2">
+      <MBSuggestion ratingKey={ratingKey} onLink={onLink} />
+
       <form onSubmit={handleSearch} className="flex gap-2">
         <input
           type="text"

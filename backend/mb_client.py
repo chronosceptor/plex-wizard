@@ -1,6 +1,7 @@
 import re
 import time
 import requests
+from urllib.parse import unquote, urlparse
 
 MB_API = "https://musicbrainz.org/ws/2"
 MB_HEADERS = {
@@ -93,6 +94,48 @@ def get_artist(mbid: str) -> dict:
         "founded":     founded or None,
         "genres":      genres,
     }
+
+
+_DISCOGS_ARTIST_RE = re.compile(r'^/artist/(\d+)')
+
+
+def _parse_url_relations(relations: list[dict]) -> dict:
+    """Extract Discogs ID and Last.fm artist name from MusicBrainz outbound url-rels.
+    These are community-curated cross-links — high-confidence candidates for auto-linking
+    Discogs/Last.fm without a manual search.
+    """
+    discogs_id = None
+    lastfm_name = None
+    for rel in relations:
+        if not isinstance(rel, dict):
+            continue
+        rel_type = rel.get("type")
+        url = ((rel.get("url") or {}).get("resource")) or ""
+        if not url:
+            continue
+        parsed = urlparse(url)
+
+        if discogs_id is None and rel_type == "discogs" and "discogs.com" in parsed.netloc:
+            m = _DISCOGS_ARTIST_RE.match(parsed.path)
+            if m:
+                discogs_id = m.group(1)
+
+        elif lastfm_name is None and rel_type == "last.fm" and "last.fm" in parsed.netloc:
+            m = re.match(r'^/music/([^/]+)', parsed.path)
+            if m:
+                lastfm_name = unquote(m.group(1)).replace('+', ' ')
+
+    return {"discogs_id": discogs_id, "lastfm_name": lastfm_name}
+
+
+def get_artist_url_relations(mbid: str) -> dict:
+    """Fetch an artist's outbound URL relations and return suggested Discogs ID / Last.fm name.
+
+    Returns {"discogs_id": str|None, "lastfm_name": str|None}.
+    """
+    _validate_mbid(mbid)
+    data = _get(f"artist/{mbid}", {"fmt": "json", "inc": "url-rels"})
+    return _parse_url_relations(data.get("relations") or [])
 
 
 def get_artist_releases(mbid: str, limit: int = 100) -> list[str]:
