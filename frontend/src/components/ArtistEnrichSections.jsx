@@ -76,7 +76,7 @@ async function applyCountry(ratingKey, country) {
 
 // ── Shared sub-components ───────────────────────────────────────────────────
 
-function TagChip({ children, color = 'gray' }) {
+export function TagChip({ children, color = 'gray' }) {
   const cls = {
     gray:   'bg-plex-border text-gray-300',
     orange: 'bg-plex-orange/20 text-plex-orange border border-plex-orange/40',
@@ -114,9 +114,47 @@ function SourceSection({ title, link, children }) {
   )
 }
 
+// ── Plex vs. service comparison helpers ─────────────────────────────────────
+// Left column always shows what Plex currently has; right column shows what
+// the service offers, with apply controls — lets the user compare before acting.
+
+function CompareHeader({ service }) {
+  return (
+    <div className="grid grid-cols-2 gap-4 px-1 text-[10px] uppercase tracking-wide text-plex-muted/60">
+      <span>Plex (actual)</span>
+      <span>{service} (sugerido)</span>
+    </div>
+  )
+}
+
+function CompareRow({ label, note, children }) {
+  return (
+    <div className="rounded-lg border border-plex-border p-4 space-y-2">
+      <p className="text-xs text-plex-muted">
+        {label}{note && <span className="text-plex-muted/60"> — {note}</span>}
+      </p>
+      <div className="grid grid-cols-2 gap-4 items-start">
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function PlexChips({ items }) {
+  return items?.length > 0
+    ? <div className="flex flex-wrap gap-1.5">{items.map(i => <TagChip key={i}>{i}</TagChip>)}</div>
+    : <p className="text-plex-muted text-sm">—</p>
+}
+
+function PlexText({ value }) {
+  return value
+    ? <p className="text-sm text-gray-300 line-clamp-4">{value}</p>
+    : <p className="text-plex-muted text-sm">—</p>
+}
+
 // ── MusicBrainz section ──────────────────────────────────────────────────────
 
-function MusicBrainzSection({ artist, onApplied }) {
+export function MusicBrainzSection({ artist, onApplied }) {
   const [applied, setApplied] = useState({ country: false, genres: false })
   const [selectedGenre, setSelectedGenre] = useState(null)
 
@@ -162,55 +200,51 @@ function MusicBrainzSection({ artist, onApplied }) {
             </div>
           )}
 
-          <div className="rounded-lg border border-plex-border p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs text-plex-muted mb-1">País</p>
-                {mb.country
-                  ? <p className="font-medium text-sm">{mb.country}</p>
-                  : <p className="text-plex-muted text-sm">No disponible en MB</p>}
-              </div>
-              {mb.country && (
+          <CompareHeader service="MusicBrainz" />
+
+          <CompareRow label="País">
+            <PlexText value={artist.country} />
+            <div className="flex items-start justify-between gap-3">
+              {mb.country
+                ? <p className="text-sm text-gray-300">{mb.country}</p>
+                : <p className="text-plex-muted text-sm">No disponible en MB</p>}
+              {mb.country && mb.country !== artist.country && (
                 <ApplyBtn applied={applied.country} disabled={mutation.isPending}
                   label="Aplicar país" onClick={() => mutation.mutate({ country: mb.country })} />
               )}
             </div>
-          </div>
+          </CompareRow>
 
           {mb.genres?.length > 0 && (() => {
             const chosen = selectedGenre ?? mb.genres[0].name
             return (
-              <div className="rounded-lg border border-plex-border p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1">
-                    <p className="text-xs text-plex-muted mb-2">
-                      Géneros <span className="text-plex-muted/60">— selecciona el que quieres aplicar</span>
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {mb.genres.slice(0, 10).map(g => {
-                        const isSelected = g.name === chosen
-                        return (
-                          <button
-                            key={g.name}
-                            onClick={() => setSelectedGenre(g.name)}
-                            className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors cursor-pointer ${
-                              isSelected
-                                ? 'bg-plex-orange/20 text-plex-orange border border-plex-orange/60 ring-1 ring-plex-orange/40'
-                                : 'bg-plex-border text-gray-300 hover:border-plex-orange/40 border border-transparent'
-                            }`}
-                          >
-                            {g.name}
-                            <span className={`text-[10px] ${isSelected ? 'opacity-70' : 'opacity-40'}`}>{g.count}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
+              <CompareRow label="Géneros" note="selecciona el que quieres aplicar">
+                <PlexChips items={artist.genres} />
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {mb.genres.slice(0, 10).map(g => {
+                      const isSelected = g.name === chosen
+                      return (
+                        <button
+                          key={g.name}
+                          onClick={() => setSelectedGenre(g.name)}
+                          className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-plex-orange/20 text-plex-orange border border-plex-orange/60 ring-1 ring-plex-orange/40'
+                              : 'bg-plex-border text-gray-300 hover:border-plex-orange/40 border border-transparent'
+                          }`}
+                        >
+                          {g.name}
+                          <span className={`text-[10px] ${isSelected ? 'opacity-70' : 'opacity-40'}`}>{g.count}</span>
+                        </button>
+                      )
+                    })}
                   </div>
                   <ApplyBtn applied={applied.genres} disabled={mutation.isPending}
                     label="Aplicar género"
                     onClick={() => mutation.mutate({ genres: [chosen] })} />
                 </div>
-              </div>
+              </CompareRow>
             )
           })()}
 
@@ -233,7 +267,7 @@ function MusicBrainzSection({ artist, onApplied }) {
 
 // ── Last.fm section ──────────────────────────────────────────────────────────
 
-function LastFMSection({ artist, onApplied }) {
+export function LastFMSection({ artist, onApplied }) {
   const [applied, setApplied] = useState({ styles: false, moods: false, bio: false, similar: false })
 
   const { data, isLoading, error } = useQuery({
@@ -269,49 +303,56 @@ function LastFMSection({ artist, onApplied }) {
             </div>
           )}
 
+          <CompareHeader service="Last.fm" />
+
           {data.tags.length > 0 && (
-            <div className="rounded-lg border border-plex-border p-4 space-y-3">
-              <div>
-                <p className="text-xs text-plex-muted mb-2">Tags <span className="text-plex-muted/60">(se mergeán con los existentes)</span></p>
+            <CompareRow label="Tags → Styles / Moods" note="se mergeán con los existentes">
+              <div className="space-y-2">
+                <div>
+                  <p className="text-[10px] text-plex-muted/70 mb-1">Styles</p>
+                  <PlexChips items={artist.styles} />
+                </div>
+                <div>
+                  <p className="text-[10px] text-plex-muted/70 mb-1">Moods</p>
+                  <PlexChips items={artist.moods} />
+                </div>
+              </div>
+              <div className="space-y-2">
                 <div className="flex flex-wrap gap-1.5">
                   {data.tags.map(t => <TagChip key={t}>{t}</TagChip>)}
                 </div>
+                <div className="flex flex-wrap gap-2">
+                  <ApplyBtn applied={applied.styles} disabled={mutation.isPending}
+                    label="→ Styles" onClick={() => mutation.mutate({ styles: data.tags })} />
+                  <ApplyBtn applied={applied.moods} disabled={mutation.isPending}
+                    label="→ Moods" onClick={() => mutation.mutate({ moods: data.tags })} />
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <ApplyBtn applied={applied.styles} disabled={mutation.isPending}
-                  label="→ Styles" onClick={() => mutation.mutate({ styles: data.tags })} />
-                <ApplyBtn applied={applied.moods} disabled={mutation.isPending}
-                  label="→ Moods" onClick={() => mutation.mutate({ moods: data.tags })} />
-              </div>
-            </div>
+            </CompareRow>
           )}
 
           {data.bio && (
-            <div className="rounded-lg border border-plex-border p-4">
+            <CompareRow label="Bio">
+              <PlexText value={artist.summary} />
               <div className="flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-plex-muted mb-2">Bio</p>
-                  <p className="text-sm text-gray-300 line-clamp-4">{data.bio}</p>
-                </div>
+                <p className="text-sm text-gray-300 line-clamp-4 flex-1 min-w-0">{data.bio}</p>
                 <ApplyBtn applied={applied.bio} disabled={mutation.isPending}
                   label="Aplicar bio" onClick={() => mutation.mutate({ bio: data.bio })} />
               </div>
-            </div>
+            </CompareRow>
           )}
 
           {data.similar.length > 0 && (
-            <div className="rounded-lg border border-plex-border p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1">
-                  <p className="text-xs text-plex-muted mb-2">Artistas similares</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {data.similar.map(s => <TagChip key={s}>{s}</TagChip>)}
-                  </div>
+            <CompareRow label="Artistas similares">
+              <PlexChips items={artist.similar} />
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {data.similar.map(s => <TagChip key={s}>{s}</TagChip>)}
                 </div>
                 <ApplyBtn applied={applied.similar} disabled={mutation.isPending}
                   label="Aplicar similares" onClick={() => mutation.mutate({ similar: data.similar })} />
               </div>
-            </div>
+            </CompareRow>
           )}
 
           {data.tags.length > 0 && data.bio && (
@@ -333,20 +374,27 @@ function LastFMSection({ artist, onApplied }) {
 
 // ── Discogs section ──────────────────────────────────────────────────────────
 
-function DiscogsSection({ artist, onApplied }) {
+export function DiscogsSection({ artist, onApplied }) {
+  const linkedId = artist.discogs_id ?? null
+
+  const [manualSearch, setManualSearch] = useState(false)
   const [selectedId, setSelectedId] = useState(null)
   const [applied, setApplied] = useState({ bio: false })
+
+  const searching = manualSearch || !linkedId
+  const effectiveId = searching ? selectedId : linkedId
 
   const searchQ = useQuery({
     queryKey: ['discogs-search', artist.ratingKey],
     queryFn: () => fetchDiscogsSearch(artist.ratingKey),
+    enabled: searching,
     retry: false,
   })
 
   const detailQ = useQuery({
-    queryKey: ['discogs-artist', selectedId],
-    queryFn: () => fetchDiscogsArtist(selectedId),
-    enabled: !!selectedId,
+    queryKey: ['discogs-artist', effectiveId],
+    queryFn: () => fetchDiscogsArtist(effectiveId),
+    enabled: !!effectiveId,
     retry: false,
   })
 
@@ -359,59 +407,81 @@ function DiscogsSection({ artist, onApplied }) {
   })
 
   const candidates = searchQ.data?.candidates ?? []
-  const selected = candidates.find(c => c.id === selectedId)
+  const selectedCandidate = searching ? candidates.find(c => c.id === selectedId) : null
+  const link = selectedCandidate
+    ? `https://www.discogs.com${selectedCandidate.url}`
+    : (effectiveId ? `https://www.discogs.com/artist/${effectiveId}` : null)
 
   return (
-    <SourceSection title="Discogs" link={selected ? `https://www.discogs.com${selected.url}` : null}>
-      {searchQ.isLoading && <p className="text-plex-muted text-sm animate-pulse">Buscando en Discogs...</p>}
-      {searchQ.error     && <p className="text-red-400 text-sm">{searchQ.error.message}</p>}
+    <SourceSection title="Discogs" link={link}>
+      <div className="space-y-4">
+        {linkedId && (
+          <div className="flex items-center justify-between text-xs text-plex-muted">
+            {searching
+              ? <span>Buscando un match alternativo al ya vinculado (Discogs ID <span className="font-mono text-gray-300">{linkedId}</span>)</span>
+              : <span>Vinculado con Discogs ID <span className="font-mono text-gray-300">{linkedId}</span></span>}
+            <button
+              onClick={() => { setManualSearch(s => !s); setSelectedId(null) }}
+              className="text-plex-orange hover:underline flex-shrink-0 ml-3"
+            >
+              {searching ? 'Volver al vinculado' : 'Buscar otro'}
+            </button>
+          </div>
+        )}
 
-      {!searchQ.isLoading && !searchQ.error && (
-        <div className="space-y-4">
-          {candidates.length === 0 && <p className="text-plex-muted text-sm">No se encontró en Discogs</p>}
+        {searching && (
+          <>
+            {searchQ.isLoading && <p className="text-plex-muted text-sm animate-pulse">Buscando en Discogs...</p>}
+            {searchQ.error     && <p className="text-red-400 text-sm">{searchQ.error.message}</p>}
 
-          {candidates.length > 0 && (
-            <div className="space-y-1.5">
-              {candidates.map(c => (
-                <div
-                  key={c.id}
-                  onClick={() => setSelectedId(c.id)}
-                  className={`flex items-center gap-3 p-3 rounded border cursor-pointer transition-colors ${
-                    selectedId === c.id
-                      ? 'border-plex-orange bg-plex-orange/10'
-                      : 'border-plex-border hover:border-plex-orange/50'
-                  }`}
-                >
-                  {c.thumb && <img src={c.thumb} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />}
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{c.name}</p>
-                    <a
-                      href={`https://www.discogs.com${c.url}`}
-                      target="_blank" rel="noopener noreferrer"
-                      className="text-xs text-plex-orange hover:underline"
-                      onClick={e => e.stopPropagation()}
-                    >
-                      Ver en Discogs ↗
-                    </a>
+            {!searchQ.isLoading && !searchQ.error && candidates.length === 0 && (
+              <p className="text-plex-muted text-sm">No se encontró en Discogs</p>
+            )}
+
+            {candidates.length > 0 && (
+              <div className="space-y-1.5">
+                {candidates.map(c => (
+                  <div
+                    key={c.id}
+                    onClick={() => setSelectedId(c.id)}
+                    className={`flex items-center gap-3 p-3 rounded border cursor-pointer transition-colors ${
+                      selectedId === c.id
+                        ? 'border-plex-orange bg-plex-orange/10'
+                        : 'border-plex-border hover:border-plex-orange/50'
+                    }`}
+                  >
+                    {c.thumb && <img src={c.thumb} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />}
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{c.name}</p>
+                      <a
+                        href={`https://www.discogs.com${c.url}`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-plex-orange hover:underline"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        Ver en Discogs ↗
+                      </a>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </>
+        )}
 
-          {selectedId && (
-            <div className="border-t border-plex-border pt-4 space-y-3">
-              {detailQ.isLoading && <p className="text-plex-muted text-sm animate-pulse">Cargando datos...</p>}
-              {detailQ.error && <p className="text-red-400 text-sm">{detailQ.error.message}</p>}
-              {detailQ.data && (
-                <>
-                  {detailQ.data.profile ? (
-                    <div className="rounded-lg border border-plex-border p-4">
+        {effectiveId && (
+          <div className={searching ? 'border-t border-plex-border pt-4 space-y-3' : 'space-y-3'}>
+            {detailQ.isLoading && <p className="text-plex-muted text-sm animate-pulse">Cargando datos...</p>}
+            {detailQ.error && <p className="text-red-400 text-sm">{detailQ.error.message}</p>}
+            {detailQ.data && (
+              <>
+                {detailQ.data.profile ? (
+                  <>
+                    <CompareHeader service="Discogs" />
+                    <CompareRow label="Bio">
+                      <PlexText value={artist.summary} />
                       <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs text-plex-muted mb-1">Bio</p>
-                          <p className="text-sm text-gray-300 line-clamp-4">{detailQ.data.profile}</p>
-                        </div>
+                        <p className="text-sm text-gray-300 line-clamp-4 flex-1 min-w-0">{detailQ.data.profile}</p>
                         <ApplyBtn
                           applied={applied.bio}
                           disabled={mutation.isPending}
@@ -419,26 +489,26 @@ function DiscogsSection({ artist, onApplied }) {
                           onClick={() => mutation.mutate({ bio: detailQ.data.profile })}
                         />
                       </div>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-plex-muted">Sin bio en Discogs</p>
-                  )}
-                  <p className="text-xs text-plex-muted">Los géneros/estilos se obtienen por release. Usa el botón "Discogs" en la tabla de albums para aplicarlos.</p>
-                </>
-              )}
-            </div>
-          )}
+                    </CompareRow>
+                  </>
+                ) : (
+                  <p className="text-xs text-plex-muted">Sin bio en Discogs</p>
+                )}
+                <p className="text-xs text-plex-muted">Los géneros/estilos se obtienen por release. Usa el botón "Discogs" en la tabla de albums para aplicarlos.</p>
+              </>
+            )}
+          </div>
+        )}
 
-          {mutation.isError && <p className="text-red-400 text-sm">{mutation.error.message}</p>}
-        </div>
-      )}
+        {mutation.isError && <p className="text-red-400 text-sm">{mutation.error.message}</p>}
+      </div>
     </SourceSection>
   )
 }
 
 // ── Wikidata section ─────────────────────────────────────────────────────────
 
-function WikidataSection({ artist, onApplied }) {
+export function WikidataSection({ artist, onApplied }) {
   const [applied, setApplied] = useState(false)
 
   const { data, isLoading, error } = useQuery({
@@ -466,22 +536,21 @@ function WikidataSection({ artist, onApplied }) {
             </a>
           )}
 
-          <div className="rounded-lg border border-plex-border p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs text-plex-muted mb-1">País de origen</p>
-                {data.country ? (
-                  <p className="font-medium text-sm">
-                    {data.country}
-                    {data.countryCode && (
-                      <span className="ml-2 text-xs text-plex-muted font-mono">{data.countryCode}</span>
-                    )}
-                  </p>
-                ) : (
-                  <p className="text-plex-muted text-sm">No disponible en Wikidata</p>
-                )}
-              </div>
-              {data.country && (
+          <CompareHeader service="Wikidata" />
+          <CompareRow label="País de origen">
+            <PlexText value={artist.country} />
+            <div className="flex items-start justify-between gap-3">
+              {data.country ? (
+                <p className="text-sm text-gray-300">
+                  {data.country}
+                  {data.countryCode && (
+                    <span className="ml-2 text-xs text-plex-muted font-mono">{data.countryCode}</span>
+                  )}
+                </p>
+              ) : (
+                <p className="text-plex-muted text-sm">No disponible en Wikidata</p>
+              )}
+              {data.country && data.country !== artist.country && (
                 <ApplyBtn
                   applied={applied}
                   disabled={mutation.isPending}
@@ -490,7 +559,7 @@ function WikidataSection({ artist, onApplied }) {
                 />
               )}
             </div>
-          </div>
+          </CompareRow>
 
           {mutation.isError && <p className="text-red-400 text-sm">{mutation.error.message}</p>}
         </div>
@@ -499,16 +568,3 @@ function WikidataSection({ artist, onApplied }) {
   )
 }
 
-// ── Main export ──────────────────────────────────────────────────────────────
-
-export default function ArtistEnrichSections({ artist, onApplied }) {
-  return (
-    <div className="space-y-4">
-      <h2 className="font-semibold text-sm text-plex-muted uppercase tracking-wide">Enrich</h2>
-      <MusicBrainzSection artist={artist} onApplied={onApplied} />
-      <LastFMSection      artist={artist} onApplied={onApplied} />
-      <DiscogsSection     artist={artist} onApplied={onApplied} />
-      <WikidataSection    artist={artist} onApplied={onApplied} />
-    </div>
-  )
-}

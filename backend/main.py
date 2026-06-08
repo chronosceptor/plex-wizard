@@ -205,18 +205,92 @@ def artist_albums(rating_key: int):
                 "trackCount": getattr(album, "leafCount", None) or 0,
             })
 
+        countries = [c.tag for c in (artist.countries or [])]
+
+        components    = db.get_compound_components(rating_key)
+        discogs_links = [c for c in components if c["service"] == "discogs"]
+        lastfm_links  = [c for c in components if c["service"] == "lastfm"]
+        mb_links      = [c for c in components if c["service"] == "musicbrainz"]
+        all_components = {c["component"] for c in components}
+
         return {
-            "ratingKey": artist.ratingKey,
-            "title":     artist.title,
-            "thumb":     bool(artist.thumb),
-            "guid":      guid,
-            "mbid":      mbid_a,
-            "isMatched": mbid_a is not None,
-            "genres":    [g.tag for g in (artist.genres or [])],
-            "country":   ([c.tag for c in (artist.countries or [])] + [None])[0],
-            "hasBio":    bool((artist.summary or "").strip()),
-            "albums":    albums,
+            "ratingKey":      artist.ratingKey,
+            "title":          artist.title,
+            "thumb":          bool(artist.thumb),
+            "art":            bool(getattr(artist, "art", None)),
+            "guid":           guid,
+            "guids":          secondary_a,
+            "mbid":           mbid_a,
+            "isMatched":      mbid_a is not None,
+            "genres":         [g.tag for g in (artist.genres or [])],
+            "styles":         [s.tag for s in getattr(artist, "styles", []) or []],
+            "moods":          [m.tag for m in (artist.moods or [])],
+            "collections":    [c.tag for c in getattr(artist, "collections", []) or []],
+            "labels":         [l.tag for l in getattr(artist, "labels", []) or []],
+            "similar":        [s.tag for s in getattr(artist, "similar", []) or []],
+            "countries":      countries,
+            "country":        (countries + [None])[0],
+            "rating":         getattr(artist, "rating", None),
+            "audienceRating": getattr(artist, "audienceRating", None),
+            "summary":        artist.summary or "",
+            "hasBio":         bool((artist.summary or "").strip()),
+            "addedAt":        artist.addedAt.isoformat() if getattr(artist, "addedAt", None) else None,
+            "discogs_links":  discogs_links,
+            "lastfm_links":   lastfm_links,
+            "mb_links":       mb_links,
+            "is_compound":    len(all_components) > 1,
+            "discogs_id":     _safe_int(discogs_links[0]["service_id"]) if discogs_links else None,
+            "lastfm_name":    lastfm_links[0]["service_id"] if lastfm_links else None,
+            "albums":         albums,
         }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class ArtistMetadataPayload(BaseModel):
+    genres:      list[str] | None = None
+    styles:      list[str] | None = None
+    moods:       list[str] | None = None
+    collections: list[str] | None = None
+    labels:      list[str] | None = None
+    similar:     list[str] | None = None
+    countries:   list[str] | None = None
+    summary:     str | None = None
+
+
+@app.put("/api/artist/{rating_key}/edit-metadata")
+def artist_edit_metadata(rating_key: int, payload: ArtistMetadataPayload):
+    """Directly edit Plex artist metadata (full list replacement per field).
+    Diffs the desired list against the current one and issues add/remove tag edits."""
+    plex = get_plex()
+    try:
+        artist = plex.fetchItem(rating_key)
+
+        def _apply_tags(desired, current_tags, add_fn, remove_fn):
+            if desired is None:
+                return
+            want = set(desired)
+            to_add    = [t for t in desired if t not in current_tags]
+            to_remove = [t for t in current_tags if t not in want]
+            if to_add:
+                add_fn(to_add)
+            if to_remove:
+                remove_fn(to_remove)
+
+        _apply_tags(payload.genres,      [g.tag for g in (artist.genres or [])],                   artist.addGenre,        artist.removeGenre)
+        _apply_tags(payload.styles,      [s.tag for s in getattr(artist, "styles", []) or []],     artist.addStyle,        artist.removeStyle)
+        _apply_tags(payload.moods,       [m.tag for m in (artist.moods or [])],                    artist.addMood,         artist.removeMood)
+        _apply_tags(payload.collections, [c.tag for c in getattr(artist, "collections", []) or []], artist.addCollection,   artist.removeCollection)
+        _apply_tags(payload.labels,      [l.tag for l in getattr(artist, "labels", []) or []],     artist.addLabel,        artist.removeLabel)
+        _apply_tags(payload.similar,     [s.tag for s in getattr(artist, "similar", []) or []],    artist.addSimilarArtist, artist.removeSimilarArtist)
+        _apply_tags(payload.countries,   [c.tag for c in (artist.countries or [])],                artist.addCountry,      artist.removeCountry)
+
+        if payload.summary is not None:
+            artist.editSummary(payload.summary)
+
+        return {"success": True}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -43,12 +43,12 @@ frontend/src/
     DiscogsLinkModal.jsx    # Link a Discogs (siempre vía CompoundLinksSection)
     LastFMLinkModal.jsx     # Link a Last.fm (siempre vía CompoundLinksSection)
     MusicBrainzLinkModal.jsx # Link a MusicBrainz — Plex agent (single) / MB direct search (compound, vía CompoundLinksSection)
-    ArtistEnrichSections.jsx # Secciones apiladas de enrich (MB · Last.fm · Discogs · Wikidata) — embebidas en ArtistDetail
+    ArtistEnrichSections.jsx # Secciones apiladas de enrich (MB · Last.fm · Discogs · Wikidata) — comparativa Plex vs servicio
     AlbumDiscogsModal.jsx   # Enrich album desde Discogs (géneros/styles/labels/bio)
     MBDataModal.jsx         # Vista datos MB para artistas con MBID
   pages/
-    Artists.jsx             # Tabla de artistas con filtros + acciones modales — nombre clicable → /artists/:id
-    ArtistDetail.jsx        # Página de artista: header + ArtistEnrichSections (enrich in-page) + tabla de albums
+    Artists.jsx             # Tabla de artistas con filtros + acciones modales — nombre clicable → /artists/:id; exporta LinkedChip/LinkBtn
+    ArtistDetail.jsx        # Página de artista (full-width, 5 tabs: Plex·MusicBrainz·Discogs·Last.fm·Wikidata) — ver sección dedicada abajo
     GenreManager.jsx        # Gestión de géneros: ver/reasignar artistas entre géneros
 ```
 
@@ -102,17 +102,49 @@ Es decir: un artista es compound si tiene **2+ nombres de componente distintos**
 
 El search de Discogs acepta query param `?q=` para búsquedas personalizadas.
 
-### ArtistEnrichSections (artistas) — embebido en ArtistDetail, no modal
-El enrich de artistas vive **dentro de la página del artista** (`ArtistDetail`), como secciones apiladas
-(todas visibles, sin tabs ni accordion) — `EnrichModal` fue eliminado (estaba huérfano, ya migrado).
-4 secciones independientes, cada una gestiona su propio `useQuery`/`useMutation` (`MusicBrainzSection`,
-`LastFMSection`, `DiscogsSection`, `WikidataSection`), compartiendo helpers `TagChip`/`ApplyBtn`/`SourceSection`:
+## ArtistDetail — página por tabs (Plex · MusicBrainz · Discogs · Last.fm · Wikidata)
+
+`ArtistDetail.jsx` es **full-width** (sin `max-w-*`) y usa `useSearchParams` para persistir el tab activo
+(`?tab=`). El header (nombre + thumb) reutiliza directamente `LinkedChip`/`LinkBtn` y los tres modales de
+servicio **exportados desde `Artists.jsx`** — mismo patrón visual y de interacción que la tabla de artistas,
+con estado propio (`mbLinkItem`/`discogsLinkItem`/`lastfmLinkItem`, nombres distintos del `discogsItem`
+existente que es para `AlbumDiscogsModal` a nivel álbum) y `onClose` que invalida `['artist-albums', rk]`.
+**No hay status dots en el header** (se quitaron — la info vive en cada tab + en los chips de match).
+
+### Tab Plex — metadata editable in-place
+A diferencia del resto (que son comparativas read-only + aplicar), el tab Plex permite **editar
+directamente la metadata de Plex**: cada campo multi-valor (géneros/styles/moods/países/colecciones/
+labels/similar) se renderiza como `EditableTagGroup` — chips removibles con "×" + input "+ Add" — y la
+bio es un `<textarea>`. Patrón de estado: `baseline` (valores cargados) vs `form` (edición local);
+`isDirty = JSON.stringify(form) !== JSON.stringify(baseline)`. Una barra inferior *sticky* con
+"Guardar cambios"/"Descartar cambios" llama `PUT /api/artist/{rk}/edit-metadata` (payload = listas
+completas deseadas) vía `useMutation`; en éxito actualiza `baseline = form` e invalida
+`['artist-albums', rk]`. El backend (`artist_edit_metadata`) **diffea** cada lista deseada contra los
+tags actuales de Plex y llama `artist.add<Campo>()`/`artist.remove<Campo>()` (mixins de PlexAPI:
+`addGenre`/`removeGenre`, `addStyle`/`removeStyle`, etc.) + `artist.editSummary()` para la bio — nunca
+arma `genre[i].tag.tag` a mano. Verificado en vivo: agregar/quitar un género de prueba se persiste y
+revierte correctamente en el servidor Plex real.
+
+### Tabs de servicios (comparativa Plex vs sugerido)
+`ArtistEnrichSections.jsx` exporta 4 secciones independientes (`MusicBrainzSection`, `LastFMSection`,
+`DiscogsSection`, `WikidataSection`, una por tab — ya NO se renderizan apiladas; `EnrichModal` fue
+eliminado por huérfano). Cada una gestiona su propio `useQuery`/`useMutation` y comparte helpers
+`TagChip`/`ApplyBtn`/`SourceSection` + los nuevos de comparación `CompareHeader`/`CompareRow`/
+`PlexChips`/`PlexText` — **Plex (actual) a la izquierda, sugerido del servicio a la derecha**, con botón
+de aplicar solo cuando difieren:
 - **MusicBrainz**: país + géneros con votos, requiere MBID
 - **Last.fm**: tags (aplicables como géneros/styles/moods), bio, artistas similares
-- **Discogs**: búsqueda de artista → bio del perfil. Géneros/estilos NO se aplican desde aquí (vienen de releases, no del artista en Discogs)
+- **Discogs**: si `artist.discogs_id` ya existe, carga el perfil vinculado directamente (sin mostrar
+  buscador) — ver nota de bug abajo. Solo expone bio; géneros/estilos vienen de releases, no del artista.
 - **Wikidata**: país de origen vía SPARQL
 
 `onApplied` invalida `['artist-albums', ratingKey]` para refrescar la página tras aplicar cualquier cambio.
+
+**Bug resuelto — Discogs mostraba buscador en artistas ya matcheados**: `/api/artist/{rk}/albums` no
+exponía `discogs_id`/`discogs_links` (solo `/status` los tenía). Se replicó la derivación de
+`db.get_compound_components()` en el endpoint de albums; `DiscogsSection` ahora chequea
+`artist.discogs_id` primero y solo muestra el buscador con un toggle explícito "Buscar otro" /
+"Volver al vinculado".
 
 ## Sugerencias automáticas MusicBrainz → Discogs/Last.fm (`url-rels`)
 

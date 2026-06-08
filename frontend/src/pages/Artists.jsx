@@ -17,7 +17,7 @@ const FILTERS = [
   { id: 'compound',   label: 'Compound' },
 ]
 
-function LinkedChip({ count = 1, label, onClick }) {
+export function LinkedChip({ count = 1, label, onClick }) {
   return (
     <button
       onClick={onClick}
@@ -29,7 +29,7 @@ function LinkedChip({ count = 1, label, onClick }) {
   )
 }
 
-function LinkBtn({ onClick }) {
+export function LinkBtn({ onClick }) {
   return (
     <button
       onClick={onClick}
