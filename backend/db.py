@@ -69,6 +69,14 @@ def init_db():
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS album_discogs_links (
+                rating_key   INTEGER PRIMARY KEY,
+                discogs_id   INTEGER NOT NULL,
+                updated_at   TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
         _migrate_legacy_links(conn)
 
 
@@ -192,3 +200,47 @@ def delete_compound_component(rating_key: int, component: str, service: str):
             "DELETE FROM compound_component_links WHERE rating_key = ? AND component = ? AND service = ?",
             (rating_key, component, service)
         )
+
+
+# ── Album Discogs links ─────────────────────────────────────────────────────
+# Records which Discogs release the user confirmed for a given Plex album, so
+# artist-level aggregation (e.g. styles/genres rollup) doesn't have to guess
+# via search every time — only confirmed matches are used.
+
+def set_album_discogs_link(rating_key: int, discogs_id: int):
+    with _connect() as conn:
+        conn.execute("""
+            INSERT INTO album_discogs_links (rating_key, discogs_id, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(rating_key) DO UPDATE SET
+                discogs_id = excluded.discogs_id,
+                updated_at = datetime('now')
+        """, (rating_key, discogs_id))
+
+
+def get_album_discogs_links_for_artist(album_rating_keys: list) -> dict:
+    """Returns {rating_key: discogs_id} for the given album rating keys that have a confirmed link."""
+    if not album_rating_keys:
+        return {}
+    with _connect() as conn:
+        placeholders = ",".join("?" for _ in album_rating_keys)
+        rows = conn.execute(
+            f"SELECT rating_key, discogs_id FROM album_discogs_links WHERE rating_key IN ({placeholders})",
+            album_rating_keys,
+        ).fetchall()
+    return {row["rating_key"]: row["discogs_id"] for row in rows}
+
+
+def get_album_discogs_link(rating_key: int):
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT discogs_id FROM album_discogs_links WHERE rating_key = ?", (rating_key,)
+        ).fetchone()
+    return row["discogs_id"] if row else None
+
+
+def get_all_album_discogs_links() -> dict:
+    """Returns {rating_key: discogs_id} for every album with a confirmed Discogs link."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT rating_key, discogs_id FROM album_discogs_links").fetchall()
+    return {row["rating_key"]: row["discogs_id"] for row in rows}

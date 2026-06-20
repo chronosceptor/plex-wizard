@@ -4,8 +4,8 @@ import ScanGate from '../components/ScanGate'
 
 const cards = [
   { key: 'artistsNoMatch',     label: 'Artistas sin match',             to: '/artists-no-match', icon: '🔗', color: 'border-red-600' },
-  { key: 'albumsNoMatch',      label: 'Albums sin match',               to: '/albums-no-match',  icon: '💿', color: 'border-red-400' },
-  { key: 'albumsNoArtwork',    label: 'Albums sin portada',             to: '/albums',           icon: '🖼️', color: 'border-red-500' },
+  { key: 'albumsNoMatch',      label: 'Albums sin match',               to: '/albums?filter=no_match',   icon: '💿', color: 'border-red-400' },
+  { key: 'albumsNoArtwork',    label: 'Albums sin portada',             to: '/albums?filter=no_artwork', icon: '🖼️', color: 'border-red-500' },
   { key: 'artistsNoGenre',     label: 'Artistas sin género',            to: '/artists-genre',    icon: '🏷️', color: 'border-yellow-500' },
   { key: 'artistsNoPhoto',     label: 'Artistas sin foto / bio',        to: '/artists-photo',    icon: '👤', color: 'border-blue-500' },
   { key: 'artistsNoCountry',   label: 'Artistas sin país',              to: '/artists-country',  icon: '🌍', color: 'border-green-500' },

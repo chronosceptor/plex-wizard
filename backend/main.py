@@ -17,7 +17,7 @@ from mb_client import (
     get_artist_releases as mb_get_releases,
     get_artist_url_relations as mb_get_url_relations,
 )
-from lastfm_client import get_artist as lfm_get_artist, search_artists as lfm_search_artists
+from lastfm_client import get_artist as lfm_get_artist, search_artists as lfm_search_artists, get_album as lfm_get_album
 import db as db
 from discogs_client import (
     search_artists as dg_search_artists,
@@ -110,6 +110,20 @@ def list_all_artists(library: str = Query(...)):
     return result
 
 
+@app.get("/api/albums")
+def list_all_albums(library: str = Query(...)):
+    """Return all albums merged with confirmed Discogs links. Requires scan cache."""
+    plex_albums = get_step_result(library, "all_albums")
+    if plex_albums is None:
+        raise HTTPException(status_code=503, detail="Scan not ready")
+
+    discogs_links = db.get_all_album_discogs_links()
+    return [
+        {**al, "discogs_id": discogs_links.get(al["ratingKey"])}
+        for al in plex_albums
+    ]
+
+
 @app.get("/api/plex-info")
 def plex_info():
     """Return Plex server base URL and machine identifier for constructing deep links."""
@@ -163,6 +177,79 @@ def artist_status(rating_key: int):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/api/album/{rating_key}/status")
+def album_status(rating_key: int):
+    """Return fresh metadata status for a single album — called after modal actions to reflect changes instantly."""
+    plex = get_plex()
+    try:
+        al = plex.fetchItem(rating_key)
+        guid = getattr(al, "guid", "") or ""
+        secondary = [g.id for g in getattr(al, "guids", [])]
+        mbid = None
+        if guid.startswith("mbid://"):
+            mbid = guid.replace("mbid://", "")
+        else:
+            for g in secondary:
+                if g.startswith("mbid://"):
+                    mbid = g.replace("mbid://", "")
+                    break
+        return {
+            "ratingKey":  al.ratingKey,
+            "thumb":      bool(al.thumb),
+            "guid":       guid,
+            "mbid":       mbid,
+            "isMatched":  mbid is not None,
+            "genres":     [g.tag for g in (al.genres or [])],
+            "styles":     [s.tag for s in (getattr(al, "styles", None) or [])],
+            "moods":      [m.tag for m in (al.moods or [])],
+            "discogs_id": db.get_album_discogs_link(rating_key),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/album/{rating_key}/detail")
+def album_detail(rating_key: int):
+    """Full single-album fetch for the AlbumDetail page — Plex metadata + link status + parent artist."""
+    plex = get_plex()
+    try:
+        al = plex.fetchItem(rating_key)
+        guid = getattr(al, "guid", "") or ""
+        secondary = [g.id for g in getattr(al, "guids", [])]
+        mbid = None
+        if guid.startswith("mbid://"):
+            mbid = guid.replace("mbid://", "")
+        else:
+            for g in secondary:
+                if g.startswith("mbid://"):
+                    mbid = g.replace("mbid://", "")
+                    break
+        return {
+            "ratingKey":       al.ratingKey,
+            "title":           al.title,
+            "year":            getattr(al, "year", None),
+            "thumb":           bool(al.thumb),
+            "guid":            guid,
+            "guids":           secondary,
+            "mbid":            mbid,
+            "isMatched":       mbid is not None,
+            "genres":          [g.tag for g in (al.genres or [])],
+            "styles":          [s.tag for s in (getattr(al, "styles", None) or [])],
+            "moods":           [m.tag for m in (al.moods or [])],
+            "collections":     [c.tag for c in (getattr(al, "collections", None) or [])],
+            "labels":          [l.tag for l in (getattr(al, "labels", None) or [])],
+            "summary":         al.summary or "",
+            "rating":          getattr(al, "rating", None),
+            "audienceRating":  getattr(al, "audienceRating", None),
+            "trackCount":      getattr(al, "leafCount", None) or 0,
+            "parentTitle":     al.parentTitle,
+            "parentRatingKey": al.parentRatingKey,
+            "discogs_id":      db.get_album_discogs_link(rating_key),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.get("/api/artist/{rating_key}/albums")
 def artist_albums(rating_key: int):
     """Return artist detail + all their albums with metadata status."""
@@ -195,15 +282,21 @@ def artist_albums(rating_key: int):
             albums.append({
                 "ratingKey":  album.ratingKey,
                 "title":      album.title,
+                "artist":     artist.title,
                 "year":       getattr(album, "year", None),
                 "thumb":      bool(album.thumb),
                 "guid":       ag,
                 "mbid":       al_mbid,
                 "isMatched":  al_mbid is not None,
                 "genres":     [g.tag for g in (album.genres or [])],
+                "styles":     [s.tag for s in (getattr(album, "styles", None) or [])],
                 "moods":      [m.tag for m in (album.moods or [])],
                 "trackCount": getattr(album, "leafCount", None) or 0,
             })
+
+        album_discogs_links = db.get_album_discogs_links_for_artist([a["ratingKey"] for a in albums])
+        for a in albums:
+            a["discogs_id"] = album_discogs_links.get(a["ratingKey"])
 
         countries = [c.tag for c in (artist.countries or [])]
 
@@ -287,6 +380,51 @@ def artist_edit_metadata(rating_key: int, payload: ArtistMetadataPayload):
 
         if payload.summary is not None:
             artist.editSummary(payload.summary)
+
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class AlbumMetadataPayload(BaseModel):
+    genres:      list[str] | None = None
+    styles:      list[str] | None = None
+    moods:       list[str] | None = None
+    collections: list[str] | None = None
+    labels:      list[str] | None = None
+    summary:     str | None = None
+
+
+@app.put("/api/album/{rating_key}/edit-metadata")
+def album_edit_metadata(rating_key: int, payload: AlbumMetadataPayload):
+    """Directly edit Plex album metadata (full list replacement per field).
+    Same diff-and-add/remove approach as artist_edit_metadata — albums only support
+    genre/style/mood/collection/label + summary (no similar/countries, unlike artists)."""
+    plex = get_plex()
+    try:
+        album = plex.fetchItem(rating_key)
+
+        def _apply_tags(desired, current_tags, add_fn, remove_fn):
+            if desired is None:
+                return
+            want = set(desired)
+            to_add    = [t for t in desired if t not in current_tags]
+            to_remove = [t for t in current_tags if t not in want]
+            if to_add:
+                add_fn(to_add)
+            if to_remove:
+                remove_fn(to_remove)
+
+        _apply_tags(payload.genres,      [g.tag for g in (album.genres or [])],                    album.addGenre,      album.removeGenre)
+        _apply_tags(payload.styles,      [s.tag for s in getattr(album, "styles", []) or []],      album.addStyle,      album.removeStyle)
+        _apply_tags(payload.moods,       [m.tag for m in (album.moods or [])],                     album.addMood,       album.removeMood)
+        _apply_tags(payload.collections, [c.tag for c in getattr(album, "collections", []) or []], album.addCollection, album.removeCollection)
+        _apply_tags(payload.labels,      [l.tag for l in getattr(album, "labels", []) or []],       album.addLabel,      album.removeLabel)
+
+        if payload.summary is not None:
+            album.editSummary(payload.summary)
 
         return {"success": True}
     except HTTPException:
@@ -733,6 +871,55 @@ def artist_apply_lastfm(rating_key: int, payload: ApplyLastFMPayload):
         _raise_for_external(e)
 
 
+@app.get("/api/album/{rating_key}/lastfm-data")
+def album_lastfm_data(rating_key: int):
+    plex = get_plex()
+    try:
+        album = plex.fetchItem(rating_key)
+        return lfm_get_album(album.parentTitle, album.title)
+    except HTTPException:
+        raise
+    except Exception as e:
+        _raise_for_external(e)
+
+
+class ApplyAlbumLastFMPayload(BaseModel):
+    styles: list[str] | None = None   # applied as styles (merged)
+    moods:  list[str] | None = None   # applied as moods (merged)
+    bio:    str | None = None         # replaces summary
+
+
+@app.put("/api/album/{rating_key}/apply-lastfm")
+def album_apply_lastfm(rating_key: int, payload: ApplyAlbumLastFMPayload):
+    plex = get_plex()
+    try:
+        album = plex.fetchItem(rating_key)
+        kwargs: dict = {}
+
+        if payload.styles:
+            existing = [s.tag for s in getattr(album, "styles", []) or []]
+            for i, style in enumerate(_merge_tags(existing, payload.styles)):
+                kwargs[f"style[{i}].tag.tag"] = style
+
+        if payload.moods:
+            existing = [m.tag for m in (album.moods or [])]
+            for i, mood in enumerate(_merge_tags(existing, payload.moods)):
+                kwargs[f"mood[{i}].tag.tag"] = mood
+
+        if payload.bio:
+            kwargs["summary.value"] = payload.bio
+            kwargs["summary.locked"] = "1"
+
+        if not kwargs:
+            raise HTTPException(status_code=400, detail="Nada que aplicar")
+        album.edit(**kwargs)
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        _raise_for_external(e)
+
+
 # ---------------------------------------------------------------------------
 # Wikidata endpoints
 # ---------------------------------------------------------------------------
@@ -785,6 +972,47 @@ def discogs_artist_detail(discogs_id: int):
         _raise_for_external(e)
 
 
+@app.get("/api/artist/{rating_key}/discogs-album-styles")
+def artist_discogs_album_styles(rating_key: int):
+    """Aggregate genres/styles from this artist's albums that have a confirmed
+    Discogs release link (set via the album's apply-discogs flow). The Discogs
+    artist endpoint has no genre/style data, so this rolls it up from releases —
+    only for albums the user already matched, to avoid blind Discogs searches."""
+    plex = get_plex()
+    try:
+        artist = plex.fetchItem(rating_key)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    albums = artist.albums()
+    links = db.get_album_discogs_links_for_artist([a.ratingKey for a in albums])
+
+    genre_counts: dict[str, int] = {}
+    style_counts: dict[str, int] = {}
+    for album in albums:
+        discogs_id = links.get(album.ratingKey)
+        if not discogs_id:
+            continue
+        try:
+            release = dg_get_release(discogs_id)
+        except Exception:
+            continue
+        for g in release.get("genres") or []:
+            genre_counts[g] = genre_counts.get(g, 0) + 1
+        for s in release.get("styles") or []:
+            style_counts[s] = style_counts.get(s, 0) + 1
+
+    def _sorted_counts(counts: dict) -> list:
+        return [{"name": name, "count": count} for name, count in sorted(counts.items(), key=lambda kv: -kv[1])]
+
+    return {
+        "genres": _sorted_counts(genre_counts),
+        "styles": _sorted_counts(style_counts),
+        "albumsConsidered": len(links),
+        "totalAlbums": len(albums),
+    }
+
+
 @app.get("/api/artist/{rating_key}/discogs-auto-match")
 def artist_discogs_auto_match(rating_key: int):
     """Auto-match via Discogs: compare Plex albums with Discogs releases."""
@@ -828,10 +1056,11 @@ def album_discogs_search(rating_key: int):
 
 
 class ApplyDiscogsPayload(BaseModel):
-    genres: list[str] | None = None
-    styles: list[str] | None = None
-    labels: list[str] | None = None
-    bio:    str | None = None
+    genres:     list[str] | None = None
+    styles:     list[str] | None = None
+    labels:     list[str] | None = None
+    bio:        str | None = None
+    discogs_id: int | None = None
 
 
 @app.get("/api/album/{rating_key}/discogs-detail")
@@ -868,6 +1097,8 @@ def album_apply_discogs(rating_key: int, payload: ApplyDiscogsPayload):
         if not kwargs:
             raise HTTPException(status_code=400, detail="Nada que aplicar")
         album.edit(**kwargs)
+        if payload.discogs_id:
+            db.set_album_discogs_link(rating_key, payload.discogs_id)
         return {"success": True, "applied": (payload.genres or []) + (payload.styles or []) + (payload.labels or [])}
     except HTTPException:
         raise

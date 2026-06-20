@@ -1,8 +1,8 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
-import AlbumAudit from './pages/AlbumAudit'
-import AlbumNoMatch from './pages/AlbumNoMatch'
+import Albums from './pages/Albums'
+import AlbumDetail from './pages/AlbumDetail'
 import TrackAudit from './pages/TrackAudit'
 import ListeningStats from './pages/ListeningStats'
 import PlaylistGenerator from './pages/PlaylistGenerator'
@@ -16,8 +16,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
-          <Route path="albums" element={<AlbumAudit />} />
-          <Route path="albums-no-match" element={<AlbumNoMatch />} />
+          <Route path="albums" element={<Albums />} />
+          <Route path="albums/:ratingKey" element={<AlbumDetail />} />
           <Route path="tracks" element={<TrackAudit />} />
           <Route path="listening" element={<ListeningStats />} />
           <Route path="playlists" element={<PlaylistGenerator />} />

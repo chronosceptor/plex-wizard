@@ -22,6 +22,12 @@ def _get(params: dict) -> dict:
     return data
 
 
+def _dict_field(data: dict, key: str) -> dict:
+    """Last.fm returns "" instead of {} for absent nested fields (e.g. tags/wiki with no data)."""
+    value = data.get(key)
+    return value if isinstance(value, dict) else {}
+
+
 def _clean_bio(raw: str) -> str:
     """Strip HTML tags and the 'Read more on Last.fm' trailer."""
     text = re.sub(r'<a\s[^>]*>.*?</a>', '', raw, flags=re.IGNORECASE | re.DOTALL)
@@ -57,16 +63,16 @@ def get_artist(name: str, mbid: str | None = None) -> dict:
     data = _get(params).get("artist", {})
 
     # Tags — can come as list or single dict
-    tags_raw = data.get("tags", {}).get("tag", [])
+    tags_raw = _dict_field(data, "tags").get("tag", [])
     if isinstance(tags_raw, dict):
         tags_raw = [tags_raw]
     tags = [t["name"] for t in tags_raw if isinstance(t, dict) and t.get("name")]
 
     # Similar artists
-    similar_raw = data.get("similar", {}).get("artist", [])
+    similar_raw = _dict_field(data, "similar").get("artist", [])
     similar = [s["name"] for s in similar_raw if isinstance(s, dict) and s.get("name")]
 
-    bio_raw = data.get("bio", {}).get("summary", "") or ""
+    bio_raw = _dict_field(data, "bio").get("summary", "") or ""
     bio = _clean_bio(bio_raw)
 
     stats = data.get("stats", {}) or {}
@@ -79,4 +85,28 @@ def get_artist(name: str, mbid: str | None = None) -> dict:
         "bio":       bio or None,
         "listeners": int(stats.get("listeners") or 0),
         "playcount": int(stats.get("playcount") or 0),
+    }
+
+
+def get_album(artist: str, album: str) -> dict:
+    """Direct lookup by artist+album name — Last.fm's album.getInfo has no search/candidates
+    step, it's a deterministic name match (unlike Discogs releases)."""
+    data = _get({"method": "album.getInfo", "artist": artist, "album": album}).get("album", {})
+
+    tags_raw = _dict_field(data, "tags").get("tag", [])
+    if isinstance(tags_raw, dict):
+        tags_raw = [tags_raw]
+    tags = [t["name"] for t in tags_raw if isinstance(t, dict) and t.get("name")]
+
+    bio_raw = _dict_field(data, "wiki").get("summary", "") or ""
+    bio = _clean_bio(bio_raw)
+
+    return {
+        "name":      data.get("name"),
+        "mbid":      data.get("mbid") or None,
+        "url":       data.get("url"),
+        "tags":      tags,
+        "bio":       bio or None,
+        "listeners": int(data.get("listeners") or 0),
+        "playcount": int(data.get("playcount") or 0),
     }

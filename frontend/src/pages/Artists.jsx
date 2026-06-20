@@ -29,13 +29,13 @@ export function LinkedChip({ count = 1, label, onClick }) {
   )
 }
 
-export function LinkBtn({ onClick }) {
+export function LinkBtn({ onClick, label = '+ Link' }) {
   return (
     <button
       onClick={onClick}
       className="text-xs border border-dashed border-plex-border text-plex-muted hover:text-white hover:border-white px-2 py-0.5 rounded transition-colors whitespace-nowrap"
     >
-      + Link
+      {label}
     </button>
   )
 }

@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 
 from plex_client import get_plex
 from audits.all_artists import all_artists
-# FASE ARTISTS: solo cargamos el paso necesario para la pestaña Artists
+from audits.all_albums import all_albums
+# FASE ARTISTS: solo cargamos los pasos necesarios para las pestañas Artists/Albums
 # from audits.albums import albums_no_artwork
 # from audits.artists import artists_no_genre, artists_no_photo
 # from audits.artists_country import artists_no_country
@@ -13,6 +14,7 @@ from audits.all_artists import all_artists
 
 STEPS = [
     ("all_artists",         "Vista de artistas",             all_artists),
+    ("all_albums",          "Vista de albums",                all_albums),
     # ("albums_no_artwork",   "Albums sin portada",            albums_no_artwork),
     # ("artists_no_genre",    "Artistas sin género",           artists_no_genre),
     # ("artists_no_photo",    "Artistas sin foto / bio",       artists_no_photo),
@@ -107,6 +109,7 @@ def _run(library: str):
                 "scannedAt": datetime.now(timezone.utc).isoformat(),
                 "summary": {
                     "totalArtists": len(results["all_artists"]),
+                    "totalAlbums":  len(results["all_albums"]),
                 },
             }
     except Exception as e:
