@@ -2,13 +2,11 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { AlbumDiscogsPanel } from '../components/AlbumDiscogsModal'
-import { AlbumLastFMPanel } from '../components/AlbumLastFMModal'
 
 const TABS = [
   { id: 'plex',        label: 'Plex' },
   { id: 'musicbrainz', label: 'MusicBrainz' },
   { id: 'discogs',     label: 'Discogs' },
-  { id: 'lastfm',      label: 'Last.fm' },
 ]
 
 function EditableTagGroup({ label, items, onChange }) {
@@ -211,6 +209,12 @@ async function refreshAlbumItem(ratingKey) {
   return res.json()
 }
 
+async function applyAlbumMbid(ratingKey, uuid) {
+  const res = await fetch(`/api/album/${ratingKey}/fix-match-mbid?uuid=${encodeURIComponent(uuid)}`, { method: 'PUT' })
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'MBID not found in Plex search results') }
+  return res.json()
+}
+
 // Same matching flow as FixMatchModal, rendered inline as a tab instead of a
 // popup — there's no extra "suggested data" to compare for MB releases, so
 // the match search itself is the tab's content.
@@ -220,10 +224,16 @@ function MusicBrainzTab({ album, onApplied }) {
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState(null)
   const [appliedGuid, setAppliedGuid] = useState(null)
+  const [manualMbid, setManualMbid] = useState('')
 
   const fixMutation = useMutation({
     mutationFn: ({ guid, name }) => applyAlbumMatch(album.ratingKey, guid, name),
     onSuccess: (_, vars) => { setAppliedGuid(vars.guid); onApplied?.() },
+  })
+
+  const mbidMutation = useMutation({
+    mutationFn: (uuid) => applyAlbumMbid(album.ratingKey, uuid),
+    onSuccess: (_, uuid) => { setAppliedGuid(`mbid://${uuid}`); onApplied?.() },
   })
 
   const refreshMutation = useMutation({
@@ -245,7 +255,13 @@ function MusicBrainzTab({ album, onApplied }) {
     }
   }
 
-  const isLoading = fixMutation.isPending || refreshMutation.isPending
+  function handleManualMbid(e) {
+    e.preventDefault()
+    const uuid = manualMbid.trim()
+    if (uuid) mbidMutation.mutate(uuid)
+  }
+
+  const isLoading = fixMutation.isPending || refreshMutation.isPending || mbidMutation.isPending
   const mbUrl = album.mbid ? `https://musicbrainz.org/release/${album.mbid}` : null
 
   return (
@@ -274,8 +290,27 @@ function MusicBrainzTab({ album, onApplied }) {
         </button>
       </form>
 
+      {/* Manual MBID entry */}
+      <form onSubmit={handleManualMbid} className="flex gap-2 items-center">
+        <input
+          type="text"
+          value={manualMbid}
+          onChange={e => setManualMbid(e.target.value)}
+          placeholder="Or enter MusicBrainz UUID directly..."
+          className="flex-1 bg-plex-dark border border-plex-border rounded-lg px-3 py-2 text-sm text-white placeholder-plex-muted focus:outline-none focus:border-plex-orange font-mono"
+        />
+        <button
+          type="submit"
+          disabled={isLoading || !manualMbid.trim()}
+          className="px-4 py-2 bg-plex-dark border border-plex-border hover:border-plex-orange text-white text-sm rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap"
+        >
+          Apply ID
+        </button>
+      </form>
+
       {searchError && <p className="text-red-400 text-sm">{searchError}</p>}
       {fixMutation.isError && <p className="text-red-400 text-sm">Error: {fixMutation.error.message}</p>}
+      {mbidMutation.isError && <p className="text-red-400 text-sm">Error: {mbidMutation.error.message}</p>}
 
       {results !== null && (
         <div className="space-y-2">
@@ -297,7 +332,18 @@ function MusicBrainzTab({ album, onApplied }) {
                       {r.year && <span className="text-xs text-plex-muted flex-shrink-0">{r.year}</span>}
                       {link && <a href={link} target="_blank" rel="noopener noreferrer" className="text-xs text-plex-orange hover:underline flex-shrink-0" onClick={e => e.stopPropagation()}>MB ↗</a>}
                     </div>
-                    {r.score != null && <p className="text-xs text-plex-muted mt-0.5">Score: {r.score}</p>}
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {r.score != null && <span className="text-xs text-plex-muted">Score: {r.score}</span>}
+                      {r.guid && (
+                        <button
+                          title="Click to copy MBID"
+                          onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(r.guid.replace('mbid://', '')) }}
+                          className="text-xs font-mono text-plex-muted hover:text-white transition-colors"
+                        >
+                          {r.guid.replace('mbid://', '').slice(0, 8)}…
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <button
                     onClick={() => fixMutation.mutate({ guid: r.guid, name: r.name })}
@@ -414,11 +460,6 @@ export default function AlbumDetail() {
           {tab === 'discogs'     && (
             <div className="bg-plex-card border border-plex-border rounded-xl p-5">
               <AlbumDiscogsPanel album={data} onApplied={handleApplied} />
-            </div>
-          )}
-          {tab === 'lastfm'      && (
-            <div className="bg-plex-card border border-plex-border rounded-xl p-5">
-              <AlbumLastFMPanel album={data} onApplied={handleApplied} />
             </div>
           )}
         </>

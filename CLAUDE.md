@@ -44,16 +44,15 @@ frontend/src/
     LastFMLinkModal.jsx     # Link a Last.fm (siempre vía CompoundLinksSection)
     MusicBrainzLinkModal.jsx # Link a MusicBrainz — Plex agent (single) / MB direct search (compound, vía CompoundLinksSection)
     ArtistEnrichSections.jsx # Secciones apiladas de enrich (MB · Last.fm · Discogs · Wikidata) — comparativa Plex vs servicio
-    AlbumsTable.jsx         # Tabla de albums compartida — usada por Albums.jsx (top-level) y ArtistDetail (tab Albums)
+    AlbumsTable.jsx         # Tabla de albums compartida — usada por Albums.jsx (top-level) y ArtistDetail (tab Albums) — sin columna Last.fm
     AlbumDiscogsModal.jsx   # Exporta AlbumDiscogsPanel (lógica) + shell modal — reusado tal cual en AlbumDetail (tab Discogs)
-    AlbumLastFMModal.jsx    # Exporta AlbumLastFMPanel (lógica) + shell modal — reusado tal cual en AlbumDetail (tab Last.fm)
-    tagAssignment.jsx       # useTagAssignment/TagAssignChips/ExpandableText — compartido por ArtistEnrichSections y AlbumLastFMModal
+    tagAssignment.jsx       # useTagAssignment/TagAssignChips/ExpandableText — usado por ArtistEnrichSections (Last.fm a nivel artista) y ExpandableText también por AlbumDiscogsModal
     MBDataModal.jsx         # Vista datos MB para artistas con MBID
   pages/
     Artists.jsx             # Tabla de artistas con filtros + acciones modales — nombre clicable → /artists/:id; exporta LinkedChip/LinkBtn
     Albums.jsx              # Tabla de albums (espejo de Artists.jsx, vía AlbumsTable.jsx) — ver sección dedicada abajo
     ArtistDetail.jsx        # Página de artista (full-width, 6 tabs: Plex·Albums·MusicBrainz·Discogs·Last.fm·Wikidata) — ver sección dedicada abajo
-    AlbumDetail.jsx         # Página de album (full-width, 4 tabs: Plex·MusicBrainz·Discogs·Last.fm) — ver sección dedicada abajo
+    AlbumDetail.jsx         # Página de album (full-width, 3 tabs: Plex·MusicBrainz·Discogs — sin Last.fm) — ver sección dedicada abajo
     GenreManager.jsx        # Gestión de géneros: ver/reasignar artistas entre géneros
 ```
 
@@ -84,21 +83,37 @@ Columns: Artist | MusicBrainz | Discogs | Last.fm | Plex
 
 ## Albums page (current) — `pages/Albums.jsx` + `components/AlbumsTable.jsx`
 
-Mirror of la página Artists pero a nivel album (flat, todas las libraries cruzadas por artista). No
-existe concepto de "compound" ni de link manual persistido para Last.fm — solo MusicBrainz y
-Discogs tienen estado real y barato de mostrar en la tabla:
+Mirror of la página Artists pero a nivel album (flat, todas las libraries cruzadas por artista).
+**Sin Last.fm** — ver nota de alcance abajo. Solo MusicBrainz y Discogs:
 - **MusicBrainz**: igual que artistas — `guid` de Plex (`mbid://uuid`), matcheado vía `FixMatchModal`
-  (`type="album"`, ya existía, reusado sin cambios).
+  (`type="album"`). Soporta búsqueda por nombre (agente de Plex, `album.matches()`) **y** entrada
+  manual de UUID (`PUT /api/album/{rk}/fix-match-mbid`, espejo exacto del endpoint de artista —
+  busca el UUID entre los resultados de Plex y aplica `fixMatch`). La entrada manual era
+  artist-only en `FixMatchModal` (`{type === 'artist' && ...}`); se removió esa condición.
 - **Discogs**: usa la tabla `album_discogs_links` (`rating_key, discogs_id, updated_at` —
-  `UNIQUE(rating_key)`), poblada cuando el usuario confirma un release en `AlbumDiscogsModal`
-  (envía `discogs_id` en el payload de apply). `db.get_all_album_discogs_links()` para el listado,
-  `db.get_album_discogs_link(rk)`/`db.get_album_discogs_links_for_artist(rks)` para refrescos
-  puntuales (el segundo es el usado por `/api/artist/{rk}/albums` para no pegarle a la DB por fila).
-- **Last.fm**: `album.getInfo` (artist+album, sin búsqueda — a diferencia de Discogs, el lookup es
-  determinístico, no hay candidatos para confirmar) — por eso NO se persiste nada ni se muestra
-  estado en la tabla, solo un botón de acción que abre `AlbumLastFMModal`. Mostrar un dot de
-  "matcheado" ahí requeriría pegarle a la API de Last.fm por cada fila de la tabla solo para
-  renderizarla — se descartó a propósito.
+  `UNIQUE(rating_key)`). **El match se confirma como paso independiente de aplicar metadata** —
+  igual que con artistas: clickear un candidato o pegar un ID en `AlbumDiscogsPanel` llama
+  `PUT /api/album/{rk}/discogs-link` (solo persiste `discogs_id`, no toca Plex) de inmediato; recién
+  después aparecen las filas de comparación con sus botones "Apply X" independientes. Antes el
+  `discogs_id` solo se guardaba como efecto secundario de aplicar algún campo en `apply-discogs`, lo
+  que hacía sentir el match condicionado a aplicar algo — corregido. `db.get_all_album_discogs_links()`
+  para el listado, `db.get_album_discogs_link(rk)`/`db.get_album_discogs_links_for_artist(rks)` para
+  refrescos puntuales (el segundo es el usado por `/api/artist/{rk}/albums` para no pegarle a la DB
+  por fila). No hay endpoint de "unlink" todavía — borrar manualmente de la tabla si se necesita.
+
+**Last.fm removido de albums por completo (decisión deliberada, no pendiente)**: se construyó un
+flujo de lookup+búsqueda+persistencia análogo a Discogs (`album_lastfm_links`, endpoints
+`lastfm-data`/`lastfm-search`/`lastfm-link`, componente `AlbumLastFMModal.jsx`/`AlbumLastFMPanel`)
+y se revirtió/eliminó por completo. Motivo: Last.fm no tiene ID estable de álbum (solo un par de
+nombres, frágil de matchear), sus tags a nivel álbum casi siempre están vacíos (caen a los tags del
+artista — ver hallazgo abajo, ya irrelevante para esta decisión pero documentado por si reaparece
+la idea), y no había dot de "matcheado" en la tabla que se beneficiara de persistir nada. Last.fm
+**se mantiene a nivel artista** (`LastFMSection` en `ArtistEnrichSections.jsx`, `LastFMLinkModal`)
+porque ahí sí es confiable (lookup por nombre de artista, no de álbum+artista) y es la **única
+fuente de "moods" y artistas similares en todo el stack** — ni MusicBrainz ni Discogs tienen esos
+conceptos. Si se reconsidera Last.fm para albums en el futuro, el código de referencia (lookup
+determinístico + fallback de búsqueda + fallback a tags de artista) vivió brevemente en
+`AlbumLastFMModal.jsx` antes de eliminarse — recuperable del historial de git si hace falta.
 
 Filters: All / No Match / No MusicBrainz / No Discogs / No Artwork (reemplaza las viejas páginas
 `AlbumAudit`/`AlbumNoMatch`, retiradas — sus auditorías de backend siguen vivas para el Dashboard).
@@ -106,14 +121,15 @@ Filters: All / No Match / No MusicBrainz / No Discogs / No Artwork (reemplaza la
 **`AlbumsTable.jsx` es la única tabla de albums** — usada tal cual por `Albums.jsx` (top-level) y por
 el tab Albums de `ArtistDetail.jsx` (`showArtist=false` oculta el subtítulo de artista). Columnas:
 Album (+ artist debajo si `showArtist`, título clicable → `/albums/:ratingKey`) | Year | MusicBrainz |
-Discogs | Last.fm | Artwork (dot informativo, sin acción) | Plex (deep-link). El nivel de detalle
-de géneros/moods/etc. vive en `AlbumDetail.jsx`, no en la fila de la tabla — la tabla es para
+Discogs | Artwork (dot informativo, sin acción) | Plex (deep-link). El nivel de detalle de
+géneros/moods/etc. vive en `AlbumDetail.jsx`, no en la fila de la tabla — la tabla es para
 triage/filtro rápido, no inspección.
 
 `tagAssignment.jsx` centraliza `useTagAssignment`/`TagAssignChips`/`ExpandableText` — extraído de
-`ArtistEnrichSections.jsx` cuando `AlbumLastFMModal.jsx` (y luego `AlbumDetail.jsx`) necesitaron la
-misma UX de asignación exclusiva Last.fm → Style/Mood (un tag nunca va a los dos campos a la vez).
-Heurística seguida: duplicar 2 usos está bien, extraer al 3er uso.
+`ArtistEnrichSections.jsx` cuando el ahora-eliminado `AlbumLastFMModal.jsx` necesitó la misma UX de
+asignación exclusiva Last.fm → Style/Mood (un tag nunca va a los dos campos a la vez). Sigue vivo
+porque `ExpandableText` lo usa también `AlbumDiscogsModal.jsx`, y `useTagAssignment`/`TagAssignChips`
+los sigue usando `ArtistEnrichSections.jsx` a nivel artista.
 
 ## Compound Artists — derivado, no almacenado
 
@@ -180,6 +196,10 @@ de aplicar solo cuando difieren:
   `useTagAssignment`/`TagAssignChips`), bio, artistas similares
 - **Discogs**: si `artist.discogs_id` ya existe, carga el perfil vinculado directamente (sin mostrar
   buscador) — ver nota de bug abajo. Solo expone bio; géneros/estilos vienen de releases, no del artista.
+  `AlbumDiscogsPanel` (a nivel album) tiene el mismo input de "entrar ID directamente" que
+  `DiscogsLinkModal`/`MusicBrainzLinkModal` para artistas — setea `selectedId` manualmente, sin pasar
+  por la búsqueda automática (`/api/album/{rk}/discogs-search`, que no acepta query custom, a
+  diferencia de la de artista).
 - **Wikidata**: país de origen vía SPARQL
 
 `onApplied` invalida `['artist-albums', ratingKey]` para refrescar la página tras aplicar cualquier cambio.
@@ -208,31 +228,31 @@ candidatos de alta confianza** sin que el usuario tenga que buscar manualmente:
 - Validado con datos reales: para "1200 Micrograms" MB sugirió `discogs_id: "28118"` — coincide
   exactamente con el candidato top de la búsqueda manual de Discogs, confirmando alta confianza.
 
-### AlbumDiscogsModal / AlbumLastFMModal (albums) — Panel + shell
-Ambos archivos exportan dos cosas: el componente por defecto (shell con backdrop+header, usado como
-modal de acción rápida desde cualquier fila de `AlbumsTable`) y un named export `AlbumDiscogsPanel`/
-`AlbumLastFMPanel` con toda la lógica (queries/mutations/UI), sin chrome de modal — este segundo es
-el que `AlbumDetail.jsx` renderiza directamente en sus tabs Discogs/Last.fm. Mismo código, dos
-presentaciones; nunca diverge entre el modal y el tab porque es literalmente la misma función.
-- `AlbumDiscogsPanel`: si `album.discogs_id` ya existe (`linkedId`), carga el release vinculado
-  directamente — sin buscador — con toggle "Search another" / "Back to linked" (mismo patrón ya
-  resuelto para el bug de Discogs a nivel artista). Si no hay link, busca de entrada. Comparativa
-  `CompareHeader`/`CompareRow`/`PlexChips`/`PlexText` igual que `ArtistEnrichSections`. Al aplicar
-  cualquier campo persiste `discogs_id` en `album_discogs_links`.
-- `AlbumLastFMPanel`: sin búsqueda (lookup directo artist+album) → tags con asignación exclusiva
-  Style/Mood (`useTagAssignment`/`TagAssignChips` de `tagAssignment.jsx`) + bio.
+### AlbumDiscogsModal (albums) — Panel + shell
+Exporta dos cosas: el componente por defecto (shell con backdrop+header, usado como modal de acción
+rápida desde cualquier fila de `AlbumsTable`) y un named export `AlbumDiscogsPanel` con toda la
+lógica (queries/mutations/UI), sin chrome de modal — este segundo es el que `AlbumDetail.jsx`
+renderiza directamente en su tab Discogs. Mismo código, dos presentaciones; nunca diverge entre el
+modal y el tab porque es literalmente la misma función. Si `album.discogs_id` ya existe (`linkedId`),
+carga el release vinculado directamente — sin buscador — con toggle "Search another" / "Back to
+linked" (mismo patrón ya resuelto para el bug de Discogs a nivel artista). Si no hay link, busca de
+entrada. Comparativa `CompareHeader`/`CompareRow`/`PlexChips`/`PlexText` igual que
+`ArtistEnrichSections`. Al aplicar cualquier campo persiste `discogs_id` en `album_discogs_links`.
 
-Ambos accesibles desde `ArtistDetail` (tab Albums, vía modal) y desde la página top-level
-`Albums.jsx` (vía modal), y desde `AlbumDetail.jsx` (vía Panel inline, sin modal).
+Accesible desde `ArtistDetail` (tab Albums, vía modal) y desde la página top-level `Albums.jsx`
+(vía modal), y desde `AlbumDetail.jsx` (vía Panel inline, sin modal).
 
-## AlbumDetail — página por tabs (Plex · MusicBrainz · Discogs · Last.fm)
+(`AlbumLastFMModal.jsx` existió brevemente con el mismo patrón Panel+shell para Last.fm a nivel
+album — eliminado, ver nota de alcance en la sección Albums page arriba.)
+
+## AlbumDetail — página por tabs (Plex · MusicBrainz · Discogs)
 
 `AlbumDetail.jsx` espeja la arquitectura de `ArtistDetail.jsx`: full-width, `useSearchParams` para
 el tab activo (`?tab=`), breadcrumb "← {parentTitle}" que navega a `/artists/{parentRatingKey}`.
-Sin tab Wikidata (país de origen no aplica a nivel album) ni tab de tracks (fuera de scope).
-Fetch único: `GET /api/album/{rk}/detail` (título, year, thumb, guid/guids/mbid, genres/styles/
-moods/collections/labels, summary, rating/audienceRating, trackCount, parentTitle/parentRatingKey,
-discogs_id).
+Sin tab Wikidata (país de origen no aplica a nivel album), sin tab Last.fm (ver nota de alcance
+arriba) ni tab de tracks (fuera de scope). Fetch único: `GET /api/album/{rk}/detail` (título, year,
+thumb, guid/guids/mbid, genres/styles/moods/collections/labels, summary, rating/audienceRating,
+trackCount, parentTitle/parentRatingKey, discogs_id).
 
 - **Tab Plex**: mismo patrón `baseline`/`form`/`isDirty` + `EditableTagGroup` que el Plex tab de
   artista, pero con **solo 5 campos editables** (Genres/Styles/Moods/Collections/Labels) — Album en
@@ -241,9 +261,14 @@ discogs_id).
   de `artist_edit_metadata` 1:1 pero acotado a los 5 mixins que Album sí expone.
 - **Tab MusicBrainz**: NO usa `FixMatchModal` (ese sigue siendo el quick-action de la tabla, sin
   cambios) — es una variante inline propia dentro de la página, pegándole a los mismos endpoints
-  (`/api/album/{rk}/matches`, `/api/album/{rk}/fix-match`) para no duplicar lógica de backend.
-- **Tabs Discogs / Last.fm**: renderizan `AlbumDiscogsPanel`/`AlbumLastFMPanel` directamente (ver
-  sección anterior) — cero código nuevo, son los mismos Panels que el modal de quick-action usa.
+  (`/api/album/{rk}/matches`, `/api/album/{rk}/fix-match`, `/api/album/{rk}/fix-match-mbid`) para no
+  duplicar lógica de backend. **Homologada con `FixMatchModal`**: incluye la misma entrada manual de
+  UUID ("Or enter MusicBrainz UUID directly...") y el botón de copiar MBID en cada resultado — se
+  había quedado desincronizada cuando se agregó la entrada manual a `FixMatchModal` (esta es una
+  copia de UI a propósito, no extracción compartida — hay que recordar sincronizarla a mano si
+  `FixMatchModal` cambia).
+- **Tab Discogs**: renderiza `AlbumDiscogsPanel` directamente (ver sección anterior) — cero código
+  nuevo, es el mismo Panel que el modal de quick-action usa.
 
 ## Patrón de actualización optimista en Artists.jsx
 

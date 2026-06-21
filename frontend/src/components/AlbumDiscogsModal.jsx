@@ -14,6 +14,16 @@ async function fetchDetail(ratingKey, discogsId) {
   return res.json()
 }
 
+async function linkDiscogs(ratingKey, discogsId) {
+  const res = await fetch(`/api/album/${ratingKey}/discogs-link`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ discogs_id: discogsId }),
+  })
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Error linking match') }
+  return res.json()
+}
+
 async function applyDiscogs(ratingKey, payload) {
   const res = await fetch(`/api/album/${ratingKey}/apply-discogs`, {
     method: 'PUT',
@@ -85,15 +95,18 @@ function PlexText({ value }) {
 // Inner content shared by the modal (quick action from a table row) and the
 // AlbumDetail page's Discogs tab (no modal chrome) — same data, two shells.
 export function AlbumDiscogsPanel({ album, onApplied }) {
-  const linkedId = album.discogs_id ?? null
-
+  const [confirmedId, setConfirmedId] = useState(null)
   const [manualSearch, setManualSearch] = useState(false)
-  const [selectedId, setSelectedId] = useState(null)
   const [selectedGenre, setSelectedGenre] = useState(null)
+  const [manualId, setManualId] = useState('')
   const [applied, setApplied] = useState({ genres: false, styles: false, labels: false, bio: false })
 
+  // The match itself is confirmed (and persisted) the moment you pick a
+  // candidate or paste an ID — same as artists. Applying fields afterward is
+  // a separate, optional, repeatable step.
+  const linkedId = confirmedId ?? album.discogs_id ?? null
   const searching = manualSearch || !linkedId
-  const effectiveId = searching ? selectedId : linkedId
+  const effectiveId = linkedId
 
   const searchQ = useQuery({
     queryKey: ['album-discogs-search', album.ratingKey],
@@ -107,6 +120,16 @@ export function AlbumDiscogsPanel({ album, onApplied }) {
     queryFn: () => fetchDetail(album.ratingKey, effectiveId),
     enabled: !!effectiveId,
     retry: false,
+  })
+
+  const linkMutation = useMutation({
+    mutationFn: (id) => linkDiscogs(album.ratingKey, id),
+    onSuccess: (_, id) => {
+      setConfirmedId(id)
+      setManualSearch(false)
+      setSelectedGenre(null)
+      setApplied({ genres: false, styles: false, labels: false, bio: false })
+    },
   })
 
   const mutation = useMutation({
@@ -125,24 +148,65 @@ export function AlbumDiscogsPanel({ album, onApplied }) {
   const candidates = searchQ.data?.candidates ?? []
   const detail = detailQ.data
 
+  function confirmMatch(id) {
+    linkMutation.mutate(id)
+  }
+
+  function handleManualLink(e) {
+    e.preventDefault()
+    const id = parseInt(manualId, 10)
+    if (!isNaN(id) && id > 0) { confirmMatch(id); setManualId('') }
+  }
+
   return (
     <div className="space-y-4">
-      {linkedId && (
+      {linkedId && !searching && (
         <div className="flex items-center justify-between text-xs text-plex-muted">
-          {searching
-            ? <span>Searching for an alternative match to the linked one (Discogs ID <span className="font-mono text-gray-300">{linkedId}</span>)</span>
-            : <span>Linked to Discogs ID <span className="font-mono text-gray-300">{linkedId}</span></span>}
+          <span>Linked to Discogs ID <span className="font-mono text-gray-300">{linkedId}</span></span>
           <button
-            onClick={() => { setManualSearch(s => !s); setSelectedId(null) }}
+            onClick={() => setManualSearch(true)}
             className="text-plex-orange hover:underline flex-shrink-0 ml-3"
           >
-            {searching ? 'Back to linked' : 'Search another'}
+            Search another
           </button>
         </div>
       )}
 
       {searching && (
         <>
+          {linkedId && (
+            <div className="flex items-center justify-between text-xs text-plex-muted">
+              <span>Searching for an alternative match to the linked one (Discogs ID <span className="font-mono text-gray-300">{linkedId}</span>)</span>
+              <button
+                onClick={() => setManualSearch(false)}
+                className="text-plex-orange hover:underline flex-shrink-0 ml-3"
+              >
+                Back to linked
+              </button>
+            </div>
+          )}
+
+          {linkMutation.isError && <p className="text-red-400 text-sm">{linkMutation.error.message}</p>}
+
+          <form onSubmit={handleManualLink} className="flex gap-2">
+            <input
+              type="number"
+              value={manualId}
+              onChange={e => setManualId(e.target.value)}
+              placeholder="Or enter Discogs release ID directly..."
+              min="1"
+              disabled={linkMutation.isPending}
+              className="flex-1 bg-plex-dark border border-plex-border rounded-lg px-3 py-2 text-sm text-white placeholder-plex-muted focus:outline-none focus:border-plex-orange disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={!manualId || linkMutation.isPending}
+              className="px-4 py-2 bg-plex-dark border border-plex-border hover:border-plex-orange text-white text-sm rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap"
+            >
+              Link ID
+            </button>
+          </form>
+
           {searchQ.isLoading && <p className="text-plex-muted text-sm animate-pulse">Searching Discogs...</p>}
           {searchQ.error     && <p className="text-red-400 text-sm">{searchQ.error.message}</p>}
 
@@ -151,16 +215,12 @@ export function AlbumDiscogsPanel({ album, onApplied }) {
           )}
 
           {candidates.length > 0 && (
-            <div className="space-y-1.5">
+            <div className={`space-y-1.5 ${linkMutation.isPending ? 'opacity-50 pointer-events-none' : ''}`}>
               {candidates.map(c => (
                 <div
                   key={c.id}
-                  onClick={() => { setSelectedId(c.id === selectedId ? null : c.id); setSelectedGenre(null) }}
-                  className={`flex items-center gap-3 p-3 rounded border cursor-pointer transition-colors ${
-                    selectedId === c.id
-                      ? 'border-plex-orange bg-plex-orange/10'
-                      : 'border-plex-border hover:border-plex-orange/50'
-                  }`}
+                  onClick={() => confirmMatch(c.id)}
+                  className="flex items-center gap-3 p-3 rounded border cursor-pointer transition-colors border-plex-border hover:border-plex-orange/50"
                 >
                   {c.thumb && <img src={c.thumb} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />}
                   <div className="min-w-0 flex-1">
@@ -184,8 +244,8 @@ export function AlbumDiscogsPanel({ album, onApplied }) {
         </>
       )}
 
-      {effectiveId && (
-        <div className={searching ? 'border-t border-plex-border pt-4 space-y-4' : 'space-y-4'}>
+      {effectiveId && !searching && (
+        <div className="space-y-4">
           {detailQ.isLoading && <p className="text-plex-muted text-sm animate-pulse">Loading data...</p>}
           {detailQ.error     && <p className="text-red-400 text-sm">{detailQ.error.message}</p>}
 

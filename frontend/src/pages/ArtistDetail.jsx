@@ -3,10 +3,10 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import FixMatchModal from '../components/FixMatchModal'
 import AlbumDiscogsModal from '../components/AlbumDiscogsModal'
-import AlbumLastFMModal from '../components/AlbumLastFMModal'
 import MusicBrainzLinkModal from '../components/MusicBrainzLinkModal'
 import DiscogsLinkModal from '../components/DiscogsLinkModal'
 import LastFMLinkModal from '../components/LastFMLinkModal'
+import MergeArtistModal from '../components/MergeArtistModal'
 import { LinkedChip, LinkBtn } from './Artists'
 import AlbumsTable from '../components/AlbumsTable'
 import {
@@ -210,14 +210,14 @@ function PlexTab({ artist }) {
   )
 }
 
-function AlbumsTab({ artist, onFix, onDiscogs, onLastfm }) {
+function AlbumsTab({ artist, onFix, onDiscogs }) {
   const albums = artist.albums ?? []
   return (
     <div>
       <h2 className="font-semibold text-sm mb-3 text-plex-muted uppercase tracking-wide">
         Albums ({albums.length})
       </h2>
-      <AlbumsTable albums={albums} showArtist={false} onFix={onFix} onDiscogs={onDiscogs} onLastfm={onLastfm} />
+      <AlbumsTable albums={albums} showArtist={false} onFix={onFix} onDiscogs={onDiscogs} />
     </div>
   )
 }
@@ -230,11 +230,11 @@ export default function ArtistDetail() {
 
   const [fixItem,     setFixItem]     = useState(null)
   const [discogsItem, setDiscogsItem] = useState(null)
-  const [lastfmItem,  setLastfmItem]  = useState(null)
 
   const [mbLinkItem,      setMbLinkItem]      = useState(null)
   const [discogsLinkItem, setDiscogsLinkItem] = useState(null)
   const [lastfmLinkItem,  setLastfmLinkItem]  = useState(null)
+  const [mergeItem,       setMergeItem]       = useState(null)
 
   const tab = TABS.some(t => t.id === searchParams.get('tab')) ? searchParams.get('tab') : 'plex'
   function setTab(id) {
@@ -259,7 +259,6 @@ export default function ArtistDetail() {
   function handleAlbumAction() {
     setFixItem(null)
     setDiscogsItem(null)
-    setLastfmItem(null)
     queryClient.invalidateQueries({ queryKey: ['artist-albums', ratingKey] })
   }
 
@@ -316,6 +315,13 @@ export default function ArtistDetail() {
                   ) : (
                     <LinkedChip count={data.lastfm_links.length} label="Last.fm" onClick={() => setLastfmLinkItem(data)} />
                   )}
+                  <button
+                    onClick={() => setMergeItem(data)}
+                    title="Merge this artist into another (duplicate Plex entry)"
+                    className="text-xs px-2.5 py-1 rounded border border-plex-border text-plex-muted hover:text-red-400 hover:border-red-400/50 transition-colors ml-1"
+                  >
+                    Merge duplicate
+                  </button>
                 </div>
               </div>
             </div>
@@ -336,7 +342,7 @@ export default function ArtistDetail() {
 
           {tab === 'plex' && <PlexTab artist={data} />}
           {tab === 'albums' && (
-            <AlbumsTab artist={data} onFix={setFixItem} onDiscogs={setDiscogsItem} onLastfm={setLastfmItem} />
+            <AlbumsTab artist={data} onFix={setFixItem} onDiscogs={setDiscogsItem} />
           )}
           {tab === 'musicbrainz' && <MusicBrainzSection artist={data} onApplied={handleEnrichApplied} />}
           {tab === 'discogs'     && <DiscogsSection     artist={data} onApplied={handleEnrichApplied} />}
@@ -353,14 +359,11 @@ export default function ArtistDetail() {
         <AlbumDiscogsModal album={discogsItem}
           onClose={handleAlbumAction} onApplied={handleAlbumAction} />
       )}
-      {lastfmItem && (
-        <AlbumLastFMModal album={lastfmItem}
-          onClose={handleAlbumAction} onApplied={handleAlbumAction} />
-      )}
 
       {mbLinkItem      && <MusicBrainzLinkModal artist={mbLinkItem}      onClose={closeMbLink} />}
       {discogsLinkItem && <DiscogsLinkModal     artist={discogsLinkItem} onClose={closeDiscogsLink} />}
       {lastfmLinkItem  && <LastFMLinkModal      artist={lastfmLinkItem}  onClose={closeLastfmLink} />}
+      {mergeItem       && <MergeArtistModal     artist={mergeItem}       onClose={() => setMergeItem(null)} />}
     </div>
   )
 }

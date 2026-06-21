@@ -23,8 +23,8 @@ async function applyMatch(type, ratingKey, guid, name) {
   return res.json()
 }
 
-async function applyMbid(ratingKey, uuid) {
-  const res = await fetch(`/api/artist/${ratingKey}/fix-match-mbid?uuid=${encodeURIComponent(uuid)}`, {
+async function applyMbid(type, ratingKey, uuid) {
+  const res = await fetch(`/api/${type}/${ratingKey}/fix-match-mbid?uuid=${encodeURIComponent(uuid)}`, {
     method: 'PUT',
   })
   if (!res.ok) {
@@ -69,7 +69,7 @@ export default function FixMatchModal({ item, type = 'artist', onClose, onFixed 
   })
 
   const mbidMutation = useMutation({
-    mutationFn: (uuid) => applyMbid(item.ratingKey, uuid),
+    mutationFn: (uuid) => applyMbid(type, item.ratingKey, uuid),
     onSuccess: (_, uuid) => {
       setAppliedGuid(`mbid://${uuid}`)
       onFixed?.(item.ratingKey)
@@ -155,25 +155,23 @@ export default function FixMatchModal({ item, type = 'artist', onClose, onFixed 
             </button>
           </form>
 
-          {/* Manual MBID entry — only for artists */}
-          {type === 'artist' && (
-            <form onSubmit={handleManualMbid} className="flex gap-2 items-center">
-              <input
-                type="text"
-                value={manualMbid}
-                onChange={e => setManualMbid(e.target.value)}
-                placeholder="Or enter MusicBrainz UUID directly..."
-                className="flex-1 bg-plex-dark border border-plex-border rounded-lg px-3 py-2 text-sm text-white placeholder-plex-muted focus:outline-none focus:border-plex-orange font-mono"
-              />
-              <button
-                type="submit"
-                disabled={isLoading || !manualMbid.trim()}
-                className="px-4 py-2 bg-plex-dark border border-plex-border hover:border-plex-orange text-white text-sm rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap"
-              >
-                Apply ID
-              </button>
-            </form>
-          )}
+          {/* Manual MBID entry */}
+          <form onSubmit={handleManualMbid} className="flex gap-2 items-center">
+            <input
+              type="text"
+              value={manualMbid}
+              onChange={e => setManualMbid(e.target.value)}
+              placeholder="Or enter MusicBrainz UUID directly..."
+              className="flex-1 bg-plex-dark border border-plex-border rounded-lg px-3 py-2 text-sm text-white placeholder-plex-muted focus:outline-none focus:border-plex-orange font-mono"
+            />
+            <button
+              type="submit"
+              disabled={isLoading || !manualMbid.trim()}
+              className="px-4 py-2 bg-plex-dark border border-plex-border hover:border-plex-orange text-white text-sm rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap"
+            >
+              Apply ID
+            </button>
+          </form>
 
           {searchError && <p className="text-red-400 text-sm">{searchError}</p>}
           {fixMutation.isError && (

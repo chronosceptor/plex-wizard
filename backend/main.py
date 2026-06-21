@@ -17,7 +17,7 @@ from mb_client import (
     get_artist_releases as mb_get_releases,
     get_artist_url_relations as mb_get_url_relations,
 )
-from lastfm_client import get_artist as lfm_get_artist, search_artists as lfm_search_artists, get_album as lfm_get_album
+from lastfm_client import get_artist as lfm_get_artist, search_artists as lfm_search_artists
 import db as db
 from discogs_client import (
     search_artists as dg_search_artists,
@@ -645,6 +645,47 @@ def artist_fix_match_mbid(rating_key: int, uuid: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/api/artist/{rating_key}/plex-search")
+def artist_plex_search(rating_key: int, query: str = Query(...)):
+    """Search this library's own Plex artists by title — for finding a duplicate
+    artist entry to merge. Distinct from `matches()`, which searches the external
+    metadata agent rather than Plex's local library."""
+    plex = get_plex()
+    try:
+        artist = plex.fetchItem(rating_key)
+        section = artist.section()
+        results = section.searchArtists(title=query)
+        return [
+            {"ratingKey": a.ratingKey, "title": a.title, "thumb": bool(a.thumb)}
+            for a in results if a.ratingKey != rating_key
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class MergeArtistPayload(BaseModel):
+    rating_keys: list[int]
+
+
+@app.put("/api/artist/{rating_key}/merge")
+def artist_merge(rating_key: int, payload: MergeArtistPayload):
+    """Merge other Plex artist entries into this one (native Plex split/merge —
+    the other artists' albums/tracks get absorbed into this one and the other
+    ratingKeys cease to exist as separate library entries). Irreversible from
+    the API; Plex exposes a matching `.split()` from its own UI if needed."""
+    plex = get_plex()
+    try:
+        artist = plex.fetchItem(rating_key)
+        artist.merge(payload.rating_keys)
+        return {"success": True, "merged": payload.rating_keys}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 def _extract_mbid(artist) -> str | None:
     """Extract MusicBrainz UUID from artist GUIDs (primary or secondary)."""
     # Check primary guid first
@@ -871,55 +912,6 @@ def artist_apply_lastfm(rating_key: int, payload: ApplyLastFMPayload):
         _raise_for_external(e)
 
 
-@app.get("/api/album/{rating_key}/lastfm-data")
-def album_lastfm_data(rating_key: int):
-    plex = get_plex()
-    try:
-        album = plex.fetchItem(rating_key)
-        return lfm_get_album(album.parentTitle, album.title)
-    except HTTPException:
-        raise
-    except Exception as e:
-        _raise_for_external(e)
-
-
-class ApplyAlbumLastFMPayload(BaseModel):
-    styles: list[str] | None = None   # applied as styles (merged)
-    moods:  list[str] | None = None   # applied as moods (merged)
-    bio:    str | None = None         # replaces summary
-
-
-@app.put("/api/album/{rating_key}/apply-lastfm")
-def album_apply_lastfm(rating_key: int, payload: ApplyAlbumLastFMPayload):
-    plex = get_plex()
-    try:
-        album = plex.fetchItem(rating_key)
-        kwargs: dict = {}
-
-        if payload.styles:
-            existing = [s.tag for s in getattr(album, "styles", []) or []]
-            for i, style in enumerate(_merge_tags(existing, payload.styles)):
-                kwargs[f"style[{i}].tag.tag"] = style
-
-        if payload.moods:
-            existing = [m.tag for m in (album.moods or [])]
-            for i, mood in enumerate(_merge_tags(existing, payload.moods)):
-                kwargs[f"mood[{i}].tag.tag"] = mood
-
-        if payload.bio:
-            kwargs["summary.value"] = payload.bio
-            kwargs["summary.locked"] = "1"
-
-        if not kwargs:
-            raise HTTPException(status_code=400, detail="Nada que aplicar")
-        album.edit(**kwargs)
-        return {"success": True}
-    except HTTPException:
-        raise
-    except Exception as e:
-        _raise_for_external(e)
-
-
 # ---------------------------------------------------------------------------
 # Wikidata endpoints
 # ---------------------------------------------------------------------------
@@ -1063,6 +1055,18 @@ class ApplyDiscogsPayload(BaseModel):
     discogs_id: int | None = None
 
 
+class AlbumDiscogsLinkPayload(BaseModel):
+    discogs_id: int
+
+
+@app.put("/api/album/{rating_key}/discogs-link")
+def album_discogs_link(rating_key: int, payload: AlbumDiscogsLinkPayload):
+    """Confirm a Discogs match for this album without applying any metadata —
+    matching and applying are separate steps, same as artist linking."""
+    db.set_album_discogs_link(rating_key, payload.discogs_id)
+    return {"success": True, "discogs_id": payload.discogs_id}
+
+
 @app.get("/api/album/{rating_key}/discogs-detail")
 def album_discogs_detail(rating_key: int, discogs_id: int = Query(...)):
     """Fetch full Discogs release detail (genres, styles, labels, notes) for a selected search result."""
@@ -1172,6 +1176,26 @@ def album_fix_match(rating_key: int, payload: FixMatchPayload):
             raise HTTPException(status_code=404, detail="Match no encontrado")
         album.fixMatch(searchResult=target)
         return {"success": True, "applied": payload.name, "guid": payload.guid}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/api/album/{rating_key}/fix-match-mbid")
+def album_fix_match_mbid(rating_key: int, uuid: str):
+    """Apply a MusicBrainz match directly by UUID — searches Plex results for the MBID."""
+    plex = get_plex()
+    try:
+        album = plex.fetchItem(rating_key)
+        guid = f"mbid://{uuid.strip()}"
+        for query in (uuid.strip(), album.title):
+            results = album.matches(title=query)
+            target = next((r for r in results if r.guid == guid), None)
+            if target:
+                album.fixMatch(searchResult=target)
+                return {"success": True, "guid": guid}
+        raise HTTPException(status_code=404, detail="MBID not found in Plex search results. Try searching by name first.")
     except HTTPException:
         raise
     except Exception as e:

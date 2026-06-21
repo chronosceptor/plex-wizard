@@ -88,25 +88,3 @@ def get_artist(name: str, mbid: str | None = None) -> dict:
     }
 
 
-def get_album(artist: str, album: str) -> dict:
-    """Direct lookup by artist+album name — Last.fm's album.getInfo has no search/candidates
-    step, it's a deterministic name match (unlike Discogs releases)."""
-    data = _get({"method": "album.getInfo", "artist": artist, "album": album}).get("album", {})
-
-    tags_raw = _dict_field(data, "tags").get("tag", [])
-    if isinstance(tags_raw, dict):
-        tags_raw = [tags_raw]
-    tags = [t["name"] for t in tags_raw if isinstance(t, dict) and t.get("name")]
-
-    bio_raw = _dict_field(data, "wiki").get("summary", "") or ""
-    bio = _clean_bio(bio_raw)
-
-    return {
-        "name":      data.get("name"),
-        "mbid":      data.get("mbid") or None,
-        "url":       data.get("url"),
-        "tags":      tags,
-        "bio":       bio or None,
-        "listeners": int(data.get("listeners") or 0),
-        "playcount": int(data.get("playcount") or 0),
-    }

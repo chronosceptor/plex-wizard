@@ -14,7 +14,7 @@ function Dot({ ok, title }) {
 // Shared by the top-level Albums page and the per-artist Albums tab — same
 // table everywhere, so improving one improves both. `showArtist` hides the
 // artist subtitle when the table is already scoped to a single artist.
-export default function AlbumsTable({ albums, showArtist = true, onFix, onDiscogs, onLastfm }) {
+export default function AlbumsTable({ albums, showArtist = true, onFix, onDiscogs }) {
   const navigate = useNavigate()
 
   const { data: plexInfo } = useQuery({
@@ -45,7 +45,6 @@ export default function AlbumsTable({ albums, showArtist = true, onFix, onDiscog
             <th className="text-xs text-plex-muted font-normal text-right px-3 py-2.5 w-16">Year</th>
             <th className="text-xs text-plex-muted font-normal text-left px-3 py-2.5 w-48">MusicBrainz</th>
             <th className="text-xs text-plex-muted font-normal text-left px-3 py-2.5 w-36">Discogs</th>
-            <th className="text-xs text-plex-muted font-normal text-left px-3 py-2.5 w-36">Last.fm</th>
             <th className="text-xs text-plex-muted font-normal text-center px-3 py-2.5 w-16" title="Album artwork">Artwork</th>
             <th className="text-xs text-plex-muted font-normal text-center py-2.5 w-20">Plex</th>
           </tr>
@@ -78,10 +77,6 @@ export default function AlbumsTable({ albums, showArtist = true, onFix, onDiscog
                 {a.discogs_id
                   ? <LinkedChip label="Discogs" onClick={() => onDiscogs(a)} />
                   : <LinkBtn onClick={() => onDiscogs(a)} />}
-              </td>
-
-              <td className="px-3 py-2.5">
-                <LinkBtn label="Last.fm" onClick={() => onLastfm(a)} />
               </td>
 
               <td className="text-center py-2.5">

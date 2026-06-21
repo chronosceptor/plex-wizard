@@ -4,7 +4,6 @@ import { useSearchParams } from 'react-router-dom'
 import { useScan } from '../context/ScanContext'
 import FixMatchModal from '../components/FixMatchModal'
 import AlbumDiscogsModal from '../components/AlbumDiscogsModal'
-import AlbumLastFMModal from '../components/AlbumLastFMModal'
 import AlbumsTable from '../components/AlbumsTable'
 
 const PAGE_SIZE = 50
@@ -38,7 +37,6 @@ export default function Albums() {
 
   const [fixItem,     setFixItem]     = useState(null)
   const [discogsItem, setDiscogsItem] = useState(null)
-  const [lastfmItem,  setLastfmItem]  = useState(null)
   const [overrides,   setOverrides]   = useState({})
 
   const allAlbumsReady = status.status === 'done' ||
@@ -68,7 +66,6 @@ export default function Albums() {
 
   function closeFix(key)     { setFixItem(null);     refreshAlbum(key || fixItem?.ratingKey) }
   function closeDiscogs(key) { setDiscogsItem(null); refreshAlbum(key || discogsItem?.ratingKey) }
-  function closeLastfm(key)  { setLastfmItem(null);  refreshAlbum(key || lastfmItem?.ratingKey) }
 
   const merged = useMemo(() =>
     albums.map(a => ({ ...a, ...(overrides[a.ratingKey] || {}) })),
@@ -151,7 +148,7 @@ export default function Albums() {
           </div>
         )}
         {allAlbumsReady && !isLoading && (
-          <AlbumsTable albums={pageItems} onFix={setFixItem} onDiscogs={setDiscogsItem} onLastfm={setLastfmItem} />
+          <AlbumsTable albums={pageItems} onFix={setFixItem} onDiscogs={setDiscogsItem} />
         )}
 
         {!isSearching && totalPages > 1 && (
@@ -182,10 +179,6 @@ export default function Albums() {
       {discogsItem && (
         <AlbumDiscogsModal album={discogsItem}
           onClose={closeDiscogs} onApplied={closeDiscogs} />
-      )}
-      {lastfmItem && (
-        <AlbumLastFMModal album={lastfmItem}
-          onClose={closeLastfm} onApplied={closeLastfm} />
       )}
     </div>
   )
